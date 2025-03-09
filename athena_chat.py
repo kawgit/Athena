@@ -17,23 +17,27 @@ from tokenizer import load_tokenizer
 from athena import load_athena
 from device import device
 
-athena = torch.compile(load_athena().to(device))
+torch.set_grad_enabled(False)
+
+athena = torch.compile(load_athena().to(device)).eval()
 tokenizer = load_tokenizer()
-end_token_ids = list(tokenizer.encode("<|end|><|endoftext|>"))
 
 text = """<|system|>You are a helpful assistant.<|end|>"""
+end_token_ids = list(tokenizer.encode("<|end|><|endoftext|>"))
 
-while True:
+with torch.no_grad():
 
-    text += f"<|user|>{input('<|user|> ')}<|end|><|assistant|>"
-    text_tokens = tokenizer.encode(text)
+    while True:
 
-    for new_token in athena.generate(text_tokens, 300, end_token_ids=end_token_ids):
-        text_tokens.append(new_token)
-        text = tokenizer.decode(text_tokens)
+        text += f"<|user|>{input('<|user|> ')}<|end|><|assistant|>"
+        text_tokens = tokenizer.encode(text)
 
-        print("=" * 100)
-        print(text.replace("<|end|>", "\n\n"))
+        for new_token in athena.generate(text_tokens, 1000, end_token_ids=end_token_ids):
+            text_tokens.append(new_token)
+            text = tokenizer.decode(text_tokens)
 
-    print("")
+            print("=" * 100)
+            print(text.replace("<|end|>", "\n\n"))
+
+        print("")
 

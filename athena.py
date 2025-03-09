@@ -27,6 +27,11 @@ class Athena(nn.Module):
         super().__init__()
 
         self.register_buffer(
+            "causal_buffer",
+            torch.ones(context_size, context_size, dtype=torch.bool).tril(diagonal=0)
+        )
+
+        self.register_buffer(
             "cos_buffer",
             torch.tensor(np.array([
                 [
@@ -50,45 +55,54 @@ class Athena(nn.Module):
         self.norm = nn.RMSNorm(embedding_size, eps=1e-05)
         self.predictor = nn.Linear(embedding_size, vocab_size, bias=False)
 
-    def forward(self, tokens):
+    def forward(self, tokens, past_kvs=None):
 
-        current_context_size = tokens.shape[1]
-        assert(current_context_size <= context_size)
+        use_cache = type(past_kvs) == list
+        create_cache = use_cache or past_kvs == "init"
 
-        cos_buffer = self.cos_buffer[:current_context_size, :]
-        sin_buffer = self.sin_buffer[:current_context_size, :]
+        queries_length = tokens.shape[1]
+        keys_length = queries_length + (past_kvs[0][0].shape[2] if use_cache else 0)
+        assert(keys_length <= context_size)
+
+        queries_start = keys_length - queries_length
+        cos_buffer = (self.cos_buffer[queries_start : keys_length, :], self.cos_buffer[:keys_length, :])
+        sin_buffer = (self.sin_buffer[queries_start : keys_length, :], self.sin_buffer[:keys_length, :])
+        causal_buffer = self.causal_buffer[queries_start : keys_length, :keys_length]
 
         embeddings = self.table(tokens)
+
+        present_kvs = []
     
-        for sa, ffn in zip(self.sas, self.ffns):
-            embeddings = sa(embeddings, cos_buffer, sin_buffer)
+        for sa, ffn, past_kv in zip(self.sas, self.ffns, past_kvs if use_cache else [None for i in self.sas]):
+            embeddings, present_kv = sa(embeddings, cos_buffer, sin_buffer, causal_buffer, past_kv=past_kv)
             embeddings = ffn(embeddings)
+
+            if create_cache:
+                present_kvs.append(present_kv)
         
         embeddings = self.norm(embeddings)
+        logits = self.predictor(embeddings)
 
-        logits = self.predictor(embeddings if self.training else embeddings[:, -1, :])
+        return (logits, present_kvs) if create_cache else logits
 
-        return logits if self.training else functional.softmax(logits, dim=-1).cpu().detach()
+    def generate(self, seed_tokens, max_new_tokens, end_token_ids=[]):
 
-    def generate(self, seed_tokens, num_new_tokens, end_token_ids=[]):
+        new_tokens = seed_tokens.copy()
+        past_kvs = "init"
 
-        self.eval()
+        for i in range(max_new_tokens):
 
-        text_tokens = seed_tokens.copy()
+            input = torch.tensor([new_tokens[-context_size:]]).to(next(self.parameters()).device)
+            logits, past_kvs = self.forward(input, past_kvs=past_kvs)
+            probs = functional.softmax(logits[0][-1], dim=-1).detach().cpu().numpy()
 
-        for i in range(num_new_tokens):
-
-            input = torch.tensor(text_tokens[-context_size:]).to(next(self.parameters()).device).reshape(1, -1)
-            output = self.forward(input).reshape(-1).detach().numpy()
-
-            new_token = np.random.choice(range(vocab_size), p=output)
-            text_tokens.append(new_token)
+            new_token = np.random.choice(range(vocab_size), p=probs)
+            new_tokens = [new_token]
 
             yield new_token
 
             if new_token in end_token_ids:
                 break
-
 
 class AthenaSA(nn.Module):
     def __init__(self):
@@ -99,40 +113,54 @@ class AthenaSA(nn.Module):
         self.qkv_proj = nn.Linear(embedding_size, 2 * key_size * num_heads + head_size * num_heads, bias=False)
         self.out_proj = nn.Linear(num_heads * head_size, embedding_size, bias=False)
 
-    def forward(self, embeddings, cos_buffer, sin_buffer):
-
-        batch_size, current_context_size, _ = embeddings.shape
+    def forward(self, embeddings, cos_buffer, sin_buffer, causal_buffer, past_kv=None):
 
         normed = self.norm(embeddings) # B, C, E
-        qkv = self.qkv_proj(normed) # B, C, Q * H + K * H + V * H
+        qkv = self.qkv_proj(normed) # B, C, H * Q + H * K + H * V
 
         keys_start = key_size * num_heads
         values_start = 2 * keys_start
 
-        queries = qkv[..., :keys_start].reshape((batch_size, current_context_size, num_heads, key_size)).transpose(1, 2) # B, H, C, Q
-        keys = qkv[..., keys_start:values_start].reshape((batch_size, current_context_size, num_heads, key_size)).transpose(1, 2) # B, H, C, K
-        values = qkv[..., values_start:].reshape((batch_size, current_context_size, num_heads, head_size)).transpose(1, 2) # B, H, C, V
+        queries = qkv[..., :keys_start] # B, C, H * Q
+        keys = qkv[..., keys_start:values_start] # B, C, H * K
+        values = qkv[..., values_start:] # B, C, H * V
 
-        queries = self.rotate(queries, cos_buffer, sin_buffer)
-        keys = self.rotate(keys, cos_buffer, sin_buffer)
+        batch_size, current_context_size, _ = embeddings.shape
+        qk_shape = (batch_size, current_context_size, num_heads, key_size)
+        v_shape = (batch_size, current_context_size, num_heads, head_size)
+
+        queries = queries.reshape(qk_shape).transpose(1, 2) # B, H, C, Q
+        keys = keys.reshape(qk_shape).transpose(1, 2) # B, H, C, K
+        values = values.reshape(v_shape).transpose(1, 2) # B, H, C, V
+
+        if past_kv != None:
+            past_keys, past_values = past_kv
+            keys = torch.cat((past_keys, keys), dim=-2)
+            values = torch.cat((past_values, values), dim=-2)
+
+        present_kv = (keys.detach(), values.detach())
+
+        queries = self.rotate(queries, cos_buffer[0], sin_buffer[0])
+        keys = self.rotate(keys, cos_buffer[1], sin_buffer[1])
 
         outputs = functional.scaled_dot_product_attention(
             queries.contiguous(),
             keys.contiguous(),
             values.contiguous(),
-            is_causal=True,
+            causal_buffer,
             dropout_p=(0 if not self.training else 0.1)
         ) # B, H, C, V
+
         outputs = outputs.transpose(1, 2).contiguous() # B, C, H, V
-        outputs = outputs.reshape((batch_size, current_context_size, num_heads * head_size)) # B, C, H * V
+        outputs = outputs.flatten(-2) # B, C, H * V
         outputs = self.out_proj(outputs) # B, C, E
 
-        return embeddings + outputs
+        return embeddings + outputs, present_kv
 
     def rotate(self, features, cos_buffer, sin_buffer):
         
         swapped = torch.cat((features[..., key_size // 2:], features[..., :key_size // 2]), dim=-1)
-
+        
         return cos_buffer * features + sin_buffer * swapped
 
 class AthenaFFN(nn.Module):
@@ -162,13 +190,12 @@ def load_athena():
 
     if resume and os.path.exists(checkpoint_path):
         print(f"Loading checkpoint from {checkpoint_path}")
-
         athena.load_state_dict(torch.load(checkpoint_path, weights_only=True)["model"])
     
     else:
         print(f"Loading base from base.pt")
-
-        athena.load_state_dict(torch.load("base.pt", weights_only=True))
+        athena.load_state_dict(torch.load("base.pt", weights_only=True), strict=False)
 
 
     return athena
+ 

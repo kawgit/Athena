@@ -12,26 +12,35 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
+import time
 import torch
+
 from tokenizer import load_tokenizer
 from athena import load_athena
 from device import device
 
+torch.set_grad_enabled(False)
+
+athena = torch.compile(load_athena().to(device)).eval()
+tokenizer = load_tokenizer()
+
 seed = """<|system|>You are a helpful assistant.<|end|>
-<|user|>Solve -42*r + 27*c = -1167 and 130*r + 4*c = 372 for r.<|end|>
+<|user|>Solve -42*r + 27*c = -1167 and 130*r + 4*c = 372.<|end|>
 <|assistant|>
 """
 
-athena = torch.compile(load_athena().to(device))
-tokenizer = load_tokenizer()
 text_tokens = tokenizer.encode(seed)
+end_token_ids = tokenizer.encode("<|end|><|endoftext|>")
+start_time = time.time()
 
-end_token_ids = list(tokenizer.encode("<|end|><|endoftext|>"))
-
-for new_token in athena.generate(text_tokens, 300, end_token_ids=end_token_ids):
+for new_token in athena.generate(text_tokens, 1000, end_token_ids=end_token_ids):
     text_tokens.append(new_token)
 
     print("=" * 100)
     print(tokenizer.decode(text_tokens))
 
 print("")
+
+print("Tokens:", len(text_tokens))
+print("Seconds elapsed:", time.time() - start_time)
+print("Tokens per second:", len(text_tokens) / (time.time() - start_time))
