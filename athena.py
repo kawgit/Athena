@@ -65,15 +65,14 @@ class Athena(nn.Module):
         assert(keys_length <= context_size)
 
         queries_start = keys_length - queries_length
+        causal_buffer = self.causal_buffer[queries_start : keys_length, :keys_length]
         cos_buffer = (self.cos_buffer[queries_start : keys_length, :], self.cos_buffer[:keys_length, :])
         sin_buffer = (self.sin_buffer[queries_start : keys_length, :], self.sin_buffer[:keys_length, :])
-        causal_buffer = self.causal_buffer[queries_start : keys_length, :keys_length]
-
-        embeddings = self.table(tokens)
 
         present_kvs = []
+        embeddings = self.table(tokens)
     
-        for sa, ffn, past_kv in zip(self.sas, self.ffns, past_kvs if use_cache else [None for i in self.sas]):
+        for sa, ffn, past_kv in zip(self.sas, self.ffns, past_kvs if use_cache else [None] * len(self.sas)):
             embeddings, present_kv = sa(embeddings, cos_buffer, sin_buffer, causal_buffer, past_kv=past_kv)
             embeddings = ffn(embeddings)
 

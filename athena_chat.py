@@ -13,7 +13,7 @@
 #    limitations under the License.
 
 import torch
-from tokenizer import load_tokenizer
+from athena_tokenizer import load_tokenizer
 from athena import load_athena
 from device import device
 
@@ -36,7 +36,7 @@ with torch.no_grad():
             text_tokens.append(new_token)
             text = tokenizer.decode(text_tokens)
 
-            print("=" * 100)
+            print("=" * 100, f" decoding {len(text_tokens)} tokens...")
             print(text.replace("<|end|>", "\n\n"))
 
         print("")

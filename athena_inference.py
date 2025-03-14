@@ -15,7 +15,7 @@
 import time
 import torch
 
-from tokenizer import load_tokenizer
+from athena_tokenizer import load_tokenizer
 from athena import load_athena
 from device import device
 
