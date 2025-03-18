@@ -20,6 +20,7 @@ import torch.nn.functional as functional
 
 from device import device
 from settings import *
+from athena_tokenizer import padding_token_id, end_token_id
 
 class Athena(nn.Module):
 
@@ -60,11 +61,10 @@ class Athena(nn.Module):
         use_cache = type(past_kvs) == list
         create_cache = use_cache or past_kvs == "init"
 
-        queries_length = tokens.shape[1]
+        batch_size, queries_length = tokens.shape
         keys_length = queries_length + (past_kvs[0][0].shape[2] if use_cache else 0)
-        assert(keys_length <= context_size)
-
         queries_start = keys_length - queries_length
+        
         causal_buffer = self.causal_buffer[queries_start : keys_length, :keys_length]
         cos_buffer = (self.cos_buffer[queries_start : keys_length, :], self.cos_buffer[:keys_length, :])
         sin_buffer = (self.sin_buffer[queries_start : keys_length, :], self.sin_buffer[:keys_length, :])
@@ -84,23 +84,63 @@ class Athena(nn.Module):
 
         return (logits, present_kvs) if create_cache else logits
 
-    def generate(self, seed_tokens, max_new_tokens, end_token_ids=[]):
+    def generate(self, seed_tokens, max_new_tokens, reply_queue=None):
 
-        new_tokens = seed_tokens.copy()
+        if reply_queue == None:
+            reply_queue = [] * len(seed_tokens)
+
+        cum_tokens = seed_tokens
+        new_tokens = cum_tokens
         past_kvs = "init"
+        active_indexes = list(range(len(seed_tokens)))
+        replying = [False] * len(seed_tokens)
 
         for i in range(max_new_tokens):
 
-            input = torch.tensor([new_tokens[-context_size:]]).to(next(self.parameters()).device)
-            logits, past_kvs = self.forward(input, past_kvs=past_kvs)
-            probs = functional.softmax(logits[0][-1], dim=-1).detach().cpu().numpy()
+            inputs = torch.tensor(new_tokens)[:, -context_size:].to(next(self.parameters()).device)
+            logits, past_kvs = self.forward(inputs, past_kvs=past_kvs)
+            probs = functional.softmax(logits[:, -1, :], dim=-1).detach().cpu().numpy()
 
-            new_token = np.random.choice(range(vocab_size), p=probs)
-            new_tokens = [new_token]
+            new_tokens = [[np.random.choice(len(prob), p=prob)] for prob in probs]
 
-            yield new_token
+            for new_index, old_index in reversed(list(enumerate(active_indexes))):
 
-            if new_token in end_token_ids:
+                if replying[old_index]:
+
+                    if len(reply_queue[old_index][0]) == 0:
+                        replying[old_index] = False
+                        del reply_queue[old_index][0]
+
+                    else:
+                        new_tokens[new_index][0] = reply_queue[old_index][0][0]
+                        del reply_queue[old_index][0][0]
+
+                cum_tokens[old_index].append(new_tokens[new_index][0])
+
+                if not replying[old_index] and new_tokens[new_index][0] == end_token_id:
+
+                    if len(reply_queue[old_index]) != 0:
+
+                        replying[old_index] = True
+
+                    else:
+
+                        del active_indexes[new_index]
+                        del new_tokens[new_index]
+                        
+                        for i, (past_k, past_v) in enumerate(past_kvs):
+
+                            mask = torch.ones(past_k.shape[0], dtype=torch.bool)
+                            mask[new_index] = False
+                            
+                            past_k = past_k[mask]
+                            past_v = past_v[mask]
+
+                            past_kvs[i] = (past_k, past_v)
+            
+            yield cum_tokens
+
+            if len(active_indexes) == 0:
                 break
 
 class AthenaSA(nn.Module):
@@ -146,7 +186,7 @@ class AthenaSA(nn.Module):
             queries.contiguous(),
             keys.contiguous(),
             values.contiguous(),
-            causal_buffer,
+            attn_mask=causal_buffer,
             dropout_p=(0 if not self.training else 0.1)
         ) # B, H, C, V
 

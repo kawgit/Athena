@@ -23,18 +23,17 @@ athena = torch.compile(load_athena().to(device)).eval()
 tokenizer = load_tokenizer()
 
 text = """<|system|>You are a helpful assistant.<|end|>"""
-end_token_ids = list(tokenizer.encode("<|end|><|endoftext|>"))
 
 while True:
 
     text += f"<|user|>{input('<|user|> ')}<|end|><|assistant|>"
     text_tokens = tokenizer.encode(text)
 
-    for new_token in athena.generate(text_tokens, 1000, end_token_ids=end_token_ids):
-        text_tokens.append(new_token)
-        text = tokenizer.decode(text_tokens)
+    for text_tokens in athena.generate([text_tokens], 1000):
 
-        print("=" * 100, f" decoding {len(text_tokens)} tokens...")
+        text = tokenizer.decode(text_tokens[0])
+
+        print("=" * 100, f" decoding {len(text_tokens[0])} tokens...")
         print(text.replace("<|end|>", "\n\n"))
 
     print("")

@@ -24,23 +24,35 @@ torch.set_grad_enabled(False)
 athena = torch.compile(load_athena().to(device)).eval()
 tokenizer = load_tokenizer()
 
+batch_size = 4
 seed = """<|system|>You are a helpful assistant.<|end|>
 <|user|>Solve -42*r + 27*c = -1167 and 130*r + 4*c = 372.<|end|>
 <|assistant|>
 """
+reply = """<|user|>Your answer may or may not be correct. Please double check your calculations or try again. <|end|><|assistant|>"""
 
-text_tokens = tokenizer.encode(seed)
-end_token_ids = tokenizer.encode("<|end|><|endoftext|>")
+text_tokenss = [tokenizer.encode(seed) for i in range(batch_size)]
+reply_queue = [[tokenizer.encode(reply) for i in range(1)] for i in range(batch_size)]
 start_time = time.time()
+time_of_last_print = 0
+time_between_prints = .5
 
-for new_token in athena.generate(text_tokens, 1000, end_token_ids=end_token_ids):
-    text_tokens.append(new_token)
+for text_tokenss in athena.generate(text_tokenss, 4000, reply_queue=reply_queue):
 
-    print("=" * 100)
-    print(tokenizer.decode(text_tokens))
+    if time.time() - time_of_last_print > time_between_prints:
+
+        time_of_last_print = time.time()
+
+        print("*=" * 50)
+
+        for text_tokens in text_tokenss:
+            print("=" * 100, f" decoding {len(text_tokens)} tokens...")
+            print(tokenizer.decode(text_tokens))
 
 print("")
 
-print("Tokens:", len(text_tokens))
+num_tokens = sum([len(text_tokens) for text_tokens in text_tokenss])
+
+print("Tokens:", num_tokens)
 print("Seconds elapsed:", time.time() - start_time)
-print("Tokens per second:", len(text_tokens) / (time.time() - start_time))
+print("Tokens per second:", num_tokens / (time.time() - start_time))
