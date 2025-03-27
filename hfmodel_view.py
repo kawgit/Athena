@@ -15,4 +15,3 @@ for name, param in model.named_parameters():
     total_size += size
 
 print(f"Total param count {total_size}")
-print(f"Time elapsed {time.time() - start_time}")

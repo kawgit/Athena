@@ -18,9 +18,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as functional
 
+from athena_generation import AthenaGeneration
+from utils import EmptyInitOnDevice
 from device import device
 from settings import *
-from athena_tokenizer import padding_token_id, end_token_id
 
 class Athena(nn.Module):
 
@@ -86,61 +87,22 @@ class Athena(nn.Module):
 
     def generate(self, seed_tokens, max_new_tokens, reply_queue=None):
 
-        if reply_queue == None:
-            reply_queue = [] * len(seed_tokens)
-
-        cum_tokens = seed_tokens
-        new_tokens = cum_tokens
-        past_kvs = "init"
-        active_indexes = list(range(len(seed_tokens)))
-        replying = [False] * len(seed_tokens)
+        selfdevice = next(self.parameters()).device
+        generation = AthenaGeneration(seed_tokens, reply_queue)
 
         for i in range(max_new_tokens):
-
-            inputs = torch.tensor(new_tokens)[:, -context_size:].to(next(self.parameters()).device)
-            logits, past_kvs = self.forward(inputs, past_kvs=past_kvs)
+            
+            inputs = torch.tensor(generation.new_tokens).to(selfdevice)
+            logits, generation.past_kvs = self.forward(inputs, past_kvs=generation.past_kvs)
             probs = functional.softmax(logits[:, -1, :], dim=-1).detach().cpu().numpy()
 
             new_tokens = [[np.random.choice(len(prob), p=prob)] for prob in probs]
 
-            for new_index, old_index in reversed(list(enumerate(active_indexes))):
+            generation.push(new_tokens)
 
-                if replying[old_index]:
+            yield generation.cum_tokens
 
-                    if len(reply_queue[old_index][0]) == 0:
-                        replying[old_index] = False
-                        del reply_queue[old_index][0]
-
-                    else:
-                        new_tokens[new_index][0] = reply_queue[old_index][0][0]
-                        del reply_queue[old_index][0][0]
-
-                cum_tokens[old_index].append(new_tokens[new_index][0])
-
-                if not replying[old_index] and new_tokens[new_index][0] == end_token_id:
-
-                    if len(reply_queue[old_index]) != 0:
-
-                        replying[old_index] = True
-
-                    else:
-
-                        del active_indexes[new_index]
-                        del new_tokens[new_index]
-                        
-                        for i, (past_k, past_v) in enumerate(past_kvs):
-
-                            mask = torch.ones(past_k.shape[0], dtype=torch.bool)
-                            mask[new_index] = False
-                            
-                            past_k = past_k[mask]
-                            past_v = past_v[mask]
-
-                            past_kvs[i] = (past_k, past_v)
-            
-            yield cum_tokens
-
-            if len(active_indexes) == 0:
+            if len(generation.active_batches) == 0:
                 break
 
 class AthenaSA(nn.Module):
@@ -225,7 +187,8 @@ class AthenaFFN(nn.Module):
 
 def load_athena():
 
-    athena = Athena()
+    with EmptyInitOnDevice(device):
+        athena = Athena()
 
     if resume and os.path.exists(checkpoint_path):
         print(f"Loading checkpoint from {checkpoint_path}")

@@ -24,7 +24,7 @@ torch.set_grad_enabled(False)
 athena = torch.compile(load_athena().to(device)).eval()
 tokenizer = load_tokenizer()
 
-batch_size = 4
+batch_size = 3
 seed = """<|system|>You are a helpful assistant.<|end|>
 <|user|>Solve -42*r + 27*c = -1167 and 130*r + 4*c = 372.<|end|>
 <|assistant|>

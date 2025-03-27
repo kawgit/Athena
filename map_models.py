@@ -2,9 +2,11 @@ import torch
 
 from athena import Athena
 from hfmodel import load_hfmodel
+from utils import EmptyInitOnDevice
 
 print("Initializing athena...")
-athena = Athena()
+with EmptyInitOnDevice('cpu'):
+    athena = Athena()
 
 print("Initializing hfmodel...")
 hfmodel = load_hfmodel()
