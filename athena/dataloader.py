@@ -4,11 +4,11 @@ from datasets import load_dataset, load_from_disk, Dataset, DatasetDict
 from datasets.config import HF_DATASETS_CACHE
 from athena.utils import Timer
 from settings import pretrain_dataset_name, pretrain_dataset_hfpath, pretrain_dataset_hfsplit, pretrain_dataset_hfcolumn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 import os
 import random
 
-def load_dataloader_pretrain(context_size, batch_size):
+def load_dataloader_pretrain(context_size, batch_size, resume_epoch=0):
     
     scrambled_dataset_name = f"{pretrain_dataset_name}_scrambled"
     cache_path = os.path.join(HF_DATASETS_CACHE, scrambled_dataset_name)
@@ -46,7 +46,9 @@ def load_dataloader_pretrain(context_size, batch_size):
     def collate_input_ids(batch):
         return torch.stack([example["input_ids"] for example in batch], dim=0)
 
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_input_ids)
+    train_dataset = Subset(train_dataset, range(int(resume_epoch * len(train_dataset)) % len(train_dataset), len(train_dataset)))
+
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_input_ids)
     valid_dataloader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_input_ids)
     
     return train_dataloader, valid_dataloader

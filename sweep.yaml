@@ -1,16 +1,24 @@
 program: athena_sweep.py
-method: grid
+method: bayes
 metric:
   name: valid_loss
   goal: minimize
 parameters:
-  packed_params:
-    values:
-      - [32768, 256, 1024, 4096, 64, 64, 16, 4]
-      - [32768, 256, 1536, 4096, 64, 64, 16, 4]
-      - [32768, 256, 1024, 6144, 64, 64, 16, 4]
-      - [32768, 256, 1024, 4096, 96, 64, 16, 4]
-      - [32768, 256, 1024, 4096, 64, 96, 16, 4]
-      - [32768, 256, 1024, 4096, 64, 64, 24, 4]
-      - [32768, 256, 1024, 4096, 64, 64, 16, 6]
-    
+  embedding_size:
+    values: [1024, 2048, 3072]
+  hidden_multiplier:
+    values: [3, 4, 5]
+  key_size:
+    values: [48, 64, 96]
+  head_size:
+    values: [64, 96, 128]
+  num_heads:
+    values: [8, 12, 16]
+  num_layers:
+    values: [2, 3, 4]
+  batch_size:
+    values: [4, 8]
+  lr:
+    distribution: uniform
+    min: 1e-6
+    max: 1e-3

@@ -80,8 +80,6 @@ class CustomTokenizer(PreTrainedTokenizerFast):
             
         return "".join([self.convert_ids_to_tokens(i) for i in result])
         
-
-# ——— Load & wrap ———
 tokenizer = RawTokenizer.from_file(tokenizer_path)
 tokenizer = CustomTokenizer(tokenizer_object=tokenizer)
 tokenizer.pad_token = "<|pad|>"

@@ -1,16 +1,18 @@
+from argparse import ArgumentParser
 import time
 import torch
 
 from athena.checkpoint import load_checkpoint
-from athena.device import device
 from athena.model import AthenaCompiled
 from athena.tokenizer import tokenizer
 from athena.utils import make_chat_pretty
-from settings import checkpoint_path
 
-torch.set_grad_enabled(False)
 
-athena, optimizer = load_checkpoint(checkpoint_path)
+argparser = ArgumentParser(description="Script for running chat inference on an athena model")
+argparser.add_argument("--name", type=str, required=True)
+args = argparser.parse_args()
+
+athena, optimizer = load_checkpoint(args.name)
 athena = AthenaCompiled(athena)
 athena.eval()
 

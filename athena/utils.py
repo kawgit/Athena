@@ -1,7 +1,8 @@
 import time
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as functional
 import torch.utils._device
+import math
 
 class EmptyInitOnDevice(torch.overrides.TorchFunctionMode):
     def __init__(self, device=None):
@@ -35,7 +36,7 @@ def print_graph(gfn, indent=0):
 
 def left_pad_and_stack(tensor_list):
     max_len = max(len(t) for t in tensor_list)
-    padded = [F.pad(torch.tensor(t, dtype=torch.long) if type(t) == list else t, (max_len - len(t), 0)) for t in tensor_list]
+    padded = [functional.pad(torch.tensor(t, dtype=torch.long) if type(t) == list else t, (max_len - len(t), 0)) for t in tensor_list]
     return torch.stack(padded)
 
 class Timer:
@@ -82,3 +83,16 @@ class Throttle:
                 print(f"Done in {elapsed:.2f} seconds.")
             self._start = None
         return False
+
+def generate_model_name(config):
+    return f"athena_{config["embedding_size"]}_{config["hidden_size"]}_{config["num_layers"]}_{config["num_heads"]}_{config["head_size"]}_{config["key_size"]}_{config["vocab_size"]}_{config["context_size"]}"
+
+def is_power_of_two(num):
+    return num != 0 and ((num & (num - 1)) == 0)
+
+def grow_nice_number(num):
+    if is_power_of_two(num):
+        return math.ceil(1.5 * num)
+    num = math.ceil(num / 1.5) * 2
+    assert(is_power_of_two(num))
+    return num

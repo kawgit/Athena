@@ -24,11 +24,8 @@ Professor Trelawney rustled past."""
     ]
 
     for text in inputs:
-        # 1) encode → list of token IDs (no special padding)
         ids = tokenizer.encode(text, add_special_tokens=False)
-        # 2) convert IDs → token strings
         tokens = tokenizer.convert_ids_to_tokens(ids)
-        # 3) decode back to text
         decoded = tokenizer.decode(ids)
 
         print(f"Original : {text}")

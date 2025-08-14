@@ -24,11 +24,11 @@ len_of_last_print = 0
 text_tokens = tokenizer.encode(text)
 
 with torch.inference_mode(), torch.autocast(device.type):
-    for generation in athena.generate([text_tokens], 8 * athena.config.context_size, stream=True, temperature=0.3):
+    for generation in athena.generate([text_tokens], 8 * athena.context_size, stream=True, temperature=0.5):
 
         time_elapsed = time.time() - time_of_last_print
 
-        if time_elapsed > time_between_prints: 
+        if time_elapsed > time_between_prints:
 
             time_of_last_print = time.time()
 

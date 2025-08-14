@@ -22,10 +22,10 @@ class AthenaGeneration():
         
         use_cache = self.past_kvs != None and self.past_kvs != "init"
         
-        if use_cache and self.past_kvs[0].shape[3] >= self.model.config.context_size:
+        if use_cache and self.past_kvs[0].shape[3] >= self.model.context_size:
             past_ks, past_vs = self.past_kvs
-            past_ks_truncated = past_ks[:, :, :, -self.model.config.context_size+1:]
-            past_vs_truncated = past_vs[:, :, :, -self.model.config.context_size+1:]
+            past_ks_truncated = past_ks[:, :, :, -self.model.context_size+1:]
+            past_vs_truncated = past_vs[:, :, :, -self.model.context_size+1:]
             self.past_kvs = (past_ks_truncated, past_vs_truncated)
         
         results = self.model_compiled(self.new_tokens, past_kvs=self.past_kvs)
