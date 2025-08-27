@@ -198,8 +198,6 @@ class AthenaSA(nn.Module):
         attn = queries @ keys.transpose(-2, -1) / math.sqrt(self.key_size) # B, H, C, C
         attn = attn.masked_fill(causal_buffer == False, float("-inf"))
         attn = functional.softmax(attn, dim=-1)
-
-        # save_tensor_as_image(attn[0][0].masked_fill(causal_buffer == False, -.1), "attn.png")
         
         outputs = attn @ values # B, H, C, V
         
