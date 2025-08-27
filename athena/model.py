@@ -1,13 +1,11 @@
 import math
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as functional
 
 from athena.device import device
 from athena.generation import AthenaGeneration
-
-NULL_LEN = 4
+from athena.utils import save_tensor_as_image
 
 class Athena(nn.Module):
 
@@ -16,39 +14,51 @@ class Athena(nn.Module):
         
         self.config = config
         self.__dict__.update(config)
-
+        
+        self.max_qs = round(self.context_size * self.context_multiple)
+        self.max_ks = self.null_len + self.max_qs
+        
         self.register_buffer(
             "causal_buffer",
-            torch.ones(self.context_size + NULL_LEN, self.context_size + NULL_LEN, dtype=torch.bool).tril(diagonal=0),
+            torch.zeros((self.max_qs, self.max_ks), dtype=torch.bool),
             persistent=False
         )
+        
+        for q_index in range(self.max_qs):
+            self.causal_buffer[q_index][:self.null_len] = True
+            self.causal_buffer[q_index][max(0, self.null_len + q_index + 1 - self.context_size):self.null_len + q_index + 1] = True
 
         self.register_buffer(
             "cos_buffer",
-            torch.tensor(np.array([
-                [
-                    math.cos(m * 10000 ** ((-2 / self.key_size) * (max(i - NULL_LEN, 0) % (self.key_size // 2)))) for i in range(self.key_size)
-                ] for m in range(self.context_size + NULL_LEN)
-            ], dtype=np.float32)).float(),
+            torch.zeros((self.max_qs, self.key_size), dtype=torch.float32),
             persistent=False
         )
-
+        
         self.register_buffer(
             "sin_buffer",
-            torch.tensor(np.array([
-                [
-                    math.sin(m * 10000 ** ((-2 / self.key_size) * (max(i - NULL_LEN, 0) % (self.key_size // 2)))) * (-1 if i < self.key_size // 2 else 1) for i in range(self.key_size)
-                ] for m in range(self.context_size + NULL_LEN)
-            ], dtype=np.float32)).float(),
+            torch.zeros((self.max_qs, self.key_size), dtype=torch.float32),
             persistent=False
         )
+        
+        i = torch.arange(self.key_size)
+        half = self.key_size // 2
+        offset = i % half
+
+        exponent = (-2.0 / self.key_size) * offset
+        scales = torch.pow(10000, exponent)
+
+        m = torch.arange(self.max_qs)
+        angles = m[:, None] * scales[None, :]
+        
+        self.cos_buffer = torch.cos(angles)
+        self.sin_buffer = torch.sin(angles)
+        self.sin_buffer[:, :half] *= -1
         
         self.table = nn.Embedding(self.vocab_size, self.embedding_size)
         self.sas = nn.ModuleList([AthenaSA(self.config) for i in range(self.num_layers)])
         self.ffns = nn.ModuleList([AthenaFFN(self.config) for i in range(self.num_layers)])
         self.norm = nn.RMSNorm(self.embedding_size, eps=1e-05)
         self.vocab_proj = nn.Linear(self.embedding_size, self.vocab_size, bias=False)
-        self.quality_proj = nn.Linear(self.embedding_size, 1, bias=False)
 
     def update_config(self, **kwargs):
         for key, value in kwargs.items():
@@ -61,7 +71,7 @@ class Athena(nn.Module):
         for ffn in self.ffns:
             ffn.update_config(**kwargs)
 
-    def forward(self, tokens, past_kvs=None, return_logits=True, return_qualities=False):
+    def forward(self, tokens, past_kvs=None, return_logits=True):
         
         self.table.weight.data[0] = torch.zeros(self.embedding_size)
 
@@ -69,13 +79,13 @@ class Athena(nn.Module):
         create_cache = past_kvs != None
 
         batch_size, q_len = tokens.shape
-        k_len = q_len + (past_kvs[0].shape[3] if use_cache else NULL_LEN)
-        q_start = k_len - q_len
+        q_start = past_kvs[0].shape[3] if use_cache else 0
+        k_len = q_start + q_len
         
-        causal_buffer = self.causal_buffer[q_start:k_len, :k_len]
+        causal_buffer = self.causal_buffer[q_start:k_len, :self.null_len + k_len]
         cos_buffer = (self.cos_buffer[q_start:k_len], self.cos_buffer[:k_len])
         sin_buffer = (self.sin_buffer[q_start:k_len], self.sin_buffer[:k_len])
-
+        
         present_kvs = []
         embeddings = self.table(tokens)
         
@@ -88,7 +98,7 @@ class Athena(nn.Module):
                 present_kvs.append(present_kv)
         
         embeddings = self.norm(embeddings)
-        
+                
         if create_cache:
             present_ks = torch.stack([present_k for present_k, _ in present_kvs])
             present_vs = torch.stack([present_v for _, present_v in present_kvs])
@@ -98,9 +108,6 @@ class Athena(nn.Module):
         
         if return_logits:
             result["logits"] = self.vocab_proj(embeddings)
-            
-        if return_qualities:
-            result["qualities"] = self.quality_proj(embeddings).squeeze(-1)
         
         if create_cache:
             result["present_kvs"] = present_kvs
@@ -139,8 +146,8 @@ class AthenaSA(nn.Module):
         self.norm = nn.RMSNorm(self.embedding_size, eps=1e-05)
         self.qkv_proj = nn.Linear(self.embedding_size, 2 * self.key_size * self.num_heads + self.head_size * self.num_heads, bias=False)
         self.out_proj = nn.Linear(self.num_heads * self.head_size, self.embedding_size, bias=False)
-        self.null_k = nn.Parameter(torch.normal(0, .1, (self.num_heads, NULL_LEN, self.key_size)))
-        self.null_v = nn.Parameter(torch.normal(0, .1, (self.num_heads, NULL_LEN, self.head_size)))
+        self.null_k = nn.Parameter(torch.normal(0, .1, (self.num_heads, self.null_len, self.key_size)))
+        self.null_v = nn.Parameter(torch.normal(0, .1, (self.num_heads, self.null_len, self.head_size)))
 
     def update_config(self, **kwargs):
         for key, value in kwargs.items():
@@ -167,29 +174,32 @@ class AthenaSA(nn.Module):
         keys = keys.reshape(qk_shape).transpose(1, 2) # B, H, C, K
         values = values.reshape(v_shape).transpose(1, 2) # B, H, C, V
 
-        if past_kv == None:
-            past_k = self.null_k.unsqueeze(0).expand(batch_size, -1, -1, -1)
-            past_v = self.null_v.unsqueeze(0).expand(batch_size, -1, -1, -1)
-        else:
+        if past_kv != None:
             past_k, past_v = past_kv
+            keys = torch.cat((past_k, keys), dim=-2)
+            values = torch.cat((past_v, values), dim=-2)
         
-        keys = torch.cat((past_k, keys), dim=-2)
-        values = torch.cat((past_v, values), dim=-2)
         present_kv = (keys.detach(), values.detach())
 
         queries = self.rotate(queries, cos_buffer[0], sin_buffer[0])
         keys = self.rotate(keys, cos_buffer[1], sin_buffer[1])
-
+        
+        if self.null_len != 0:
+            null_k = self.null_k.unsqueeze(0).expand(batch_size, -1, -1, -1)
+            null_v = self.null_v.unsqueeze(0).expand(batch_size, -1, -1, -1)
+            
+            keys = torch.cat((null_k, keys), dim=-2)
+            values = torch.cat((null_v, values), dim=-2)
+        
         queries = queries.contiguous()
         keys = keys.contiguous()
         values = values.contiguous()
         
-        # queries = functional.rms_norm(queries, (self.key_size,), eps=self.norm.eps)
-        # keys = functional.rms_norm(keys, (self.key_size,), eps=self.norm.eps)
-        
         attn = queries @ keys.transpose(-2, -1) / math.sqrt(self.key_size) # B, H, C, C
         attn = attn.masked_fill(causal_buffer == False, float("-inf"))
         attn = functional.softmax(attn, dim=-1)
+
+        # save_tensor_as_image(attn[0][0].masked_fill(causal_buffer == False, -.1), "attn.png")
         
         outputs = attn @ values # B, H, C, V
         

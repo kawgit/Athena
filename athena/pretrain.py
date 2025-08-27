@@ -53,7 +53,7 @@ class Pretrainer():
             
         while True:
                     
-            train_dataloader, valid_dataloader = load_dataloader_pretrain(self.athena.context_size + 1, self.batch_size, resume_epoch=self.run.summary.get("epoch", 0))
+            train_dataloader, valid_dataloader = load_dataloader_pretrain(round(self.athena.context_size * self.athena.context_multiple) + 1, self.batch_size, resume_epoch=self.run.summary.get("epoch", 0))
 
             print("Starting epoch...")
 

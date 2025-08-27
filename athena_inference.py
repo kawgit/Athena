@@ -1,4 +1,5 @@
 from argparse import ArgumentParser
+import os
 import time
 import torch
 
@@ -18,13 +19,13 @@ athena = AthenaCompiled(athena)
 text = "Harry"
 time_of_start = time.time()
 time_of_last_print = time.time()
-time_between_prints = 1
+time_between_prints = 0.1
 len_of_last_print = 0
 
 text_tokens = tokenizer.encode(text)
 
 with torch.inference_mode(), torch.autocast(device.type):
-    for generation in athena.generate([text_tokens], 8 * athena.context_size, stream=True, temperature=0.5):
+    for generation in athena.generate([text_tokens], 8 * athena.context_size, stream=True, temperature=1):
 
         time_elapsed = time.time() - time_of_last_print
 
@@ -35,7 +36,7 @@ with torch.inference_mode(), torch.autocast(device.type):
             text = tokenizer.decode(generation.cum_tokens[0].tolist())
             curr_len = len(generation.cum_tokens[0])
 
-            print("=" * 100)
+            os.system("clear")
             print(make_chat_pretty(text))
             print(f"Total tokens: {curr_len} Recent TPS: {(curr_len - len_of_last_print) / time_elapsed:.2f} Total TPS: {curr_len / (time.time() - time_of_start):.2f}")
             

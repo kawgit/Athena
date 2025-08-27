@@ -1,8 +1,10 @@
+import math
+import matplotlib.pyplot as plt
+import numpy as np
 import time
 import torch
 import torch.nn.functional as functional
 import torch.utils._device
-import math
 
 class EmptyInitOnDevice(torch.overrides.TorchFunctionMode):
     def __init__(self, device=None):
@@ -85,7 +87,7 @@ class Throttle:
         return False
 
 def generate_model_name(config):
-    return f"athena_{config["embedding_size"]}_{config["hidden_size"]}_{config["num_layers"]}_{config["num_heads"]}_{config["head_size"]}_{config["key_size"]}_{config["vocab_size"]}_{config["context_size"]}"
+    return config["name"] if config["name"] != None else f"athena_{"_".join(str(value) for value in config.values() if type(value) in [int, float])}"
 
 def is_power_of_two(num):
     return num != 0 and ((num & (num - 1)) == 0)
@@ -96,3 +98,26 @@ def grow_nice_number(num):
     num = math.ceil(num / 1.5) * 2
     assert(is_power_of_two(num))
     return num
+
+def save_tensor_as_image(tensor, filename="output.png", cmap="viridis"):
+    """
+    Save a 2D tensor (or numpy array) as an image.
+
+    Args:
+        tensor: 2D torch.Tensor or np.ndarray of floats
+        filename: Path to save the image (e.g. 'image.png')
+        cmap: Matplotlib colormap (default: 'viridis')
+    """
+    # Convert PyTorch tensor to numpy if needed
+    if isinstance(tensor, torch.Tensor):
+        tensor = tensor.detach().cpu().numpy()
+    
+    # Ensure 2D
+    if tensor.ndim != 2:
+        raise ValueError("Input must be a 2D tensor or array")
+    
+    # Normalize values to [0,1] for display
+    norm_tensor = (tensor - np.min(tensor)) / (np.max(tensor) - np.min(tensor) + 1e-8)
+    
+    plt.imsave(filename, norm_tensor, cmap=cmap)
+    print(f"Image saved to {filename}")
