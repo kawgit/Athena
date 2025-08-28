@@ -27,20 +27,9 @@ def save_checkpoint(athena, optimizer=None, scheduler=None, scaler=None):
 
 
 def select_amp(dev: torch.device):
-    """
-    Returns:
-        amp_dtype (torch.dtype), use_scaler (bool)
-
-    CUDA: Prefer BF16 if supported; otherwise FP16 + GradScaler
-    MPS: FP16 autocast; no GradScaler
-    CPU: BF16 autocast when available; no GradScaler
-    """
-    if dev.type == "cuda":
-        return (torch.bfloat16, False) if torch.cuda.is_bf16_supported() else (torch.float16, True)
-    elif dev.type == "mps":
-        return torch.float16, False
-    else:
-        return torch.bfloat16, False
+    if dev.type == "cuda" and not torch.cuda.is_bf16_supported():
+        return torch.float16, True
+    return torch.bfloat16, False
 
 
 def load_checkpoint(name):
