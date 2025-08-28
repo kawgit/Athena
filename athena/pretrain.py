@@ -53,16 +53,18 @@ class Pretrainer():
                 self.batch_size,
                 resume_epoch=self.run.summary.get("epoch", 0)
             )
+            
+            total_steps_in_epoch = round(len(train_dataloader) / (1 - self.run.summary.get("epoch", 0) % 1))
 
             print("Starting epoch...")
 
             for batch in train_dataloader:
-                step_info = self.step(batch, len(train_dataloader))
+                step_info = self.step(batch, total_steps_in_epoch)
         
                 with log_throttle as should_run:
                     if should_run:
                         print(
-                            f"Step {step_info['step']} out of {len(train_dataloader)} "
+                            f"Step {step_info['step']} out of {total_steps_in_epoch} "
                             f"Time {step_info['training_time']:.4f} "
                             f"Loss {step_info['loss']:.4f} "
                             f"Step Time {step_info['step_time']:.4f} "
