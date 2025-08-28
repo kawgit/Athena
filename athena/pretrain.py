@@ -113,7 +113,6 @@ class Pretrainer():
             batch_x = batch[:, :-1].contiguous()
             batch_y = batch[:, 1:].contiguous()
         
-            # Zero gradients only at start of accumulation cycle
             if self._accumulation_counter == 0:
                 self.optimizer.zero_grad(set_to_none=True)
 
