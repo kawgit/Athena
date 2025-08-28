@@ -11,11 +11,10 @@ from athena.utils import EmptyInitOnDevice
 def get_checkpoint_path(name):
     return f"checkpoints/{name.removesuffix('.ckpt')}.ckpt"
 
-def save_checkpoint(athena, step=0, optimizer=None, scheduler=None, scaler=None):
+def save_checkpoint(athena, optimizer=None, scheduler=None, scaler=None):
     checkpoint = {
         'config': athena.config,
         'weights': athena.state_dict(),
-        'step': step,
         'optimizer': optimizer.state_dict() if optimizer is not None else None,
         'scheduler': scheduler.state_dict() if scheduler is not None else None,
         'scaler': scaler.state_dict() if scaler is not None else None,
@@ -59,9 +58,7 @@ def load_checkpoint(name):
     if checkpoint.get('optimizer') is not None:
         optimizer.load_state_dict(checkpoint['optimizer'])
 
-    warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=50)
-    main = ConstantLR(optimizer, factor=1.0, total_iters=950)
-    scheduler = SequentialLR(optimizer, schedulers=[warmup, main], milestones=[50])
+    scheduler = ConstantLR(optimizer, factor=1.0)
     if checkpoint.get('scheduler') is not None:
         scheduler.load_state_dict(checkpoint['scheduler'])
 

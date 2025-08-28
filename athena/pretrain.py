@@ -40,7 +40,7 @@ class Pretrainer():
             pass
         wandb.finish()
         with Timer("Saving checkpoint"):
-            save_checkpoint(self.athena, 69, self.optimizer, self.scheduler, self.scaler)
+            save_checkpoint(self.athena, self.optimizer, self.scheduler, self.scaler)
         
     def train_internal(self, epoch_limit, time_limit):
         save_throttle = Throttle("Saving checkpoint", self.save_every)
@@ -80,7 +80,7 @@ class Pretrainer():
 
                 with save_throttle as should_run:
                     if should_run:
-                        save_checkpoint(self.athena, step_info["step"], self.optimizer, self.scheduler, self.scaler)
+                        save_checkpoint(self.athena, self.optimizer, self.scheduler, self.scaler)
                         
                 if self.run.summary.get("epoch", 0) >= epoch_limit or self.run.summary.get("training_time", 0) >= time_limit:
                     return
