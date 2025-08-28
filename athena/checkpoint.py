@@ -1,52 +1,75 @@
-import torch
-import os
+from torch import GradScaler
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LinearLR, ConstantLR, SequentialLR
+import os
+import torch
 
+from athena.device import device
 from athena.model import Athena
 from athena.utils import EmptyInitOnDevice
-from athena.device import device
 
 def get_checkpoint_path(name):
-    return f"checkpoints/{name}.ckpt"
+    return f"checkpoints/{name.removesuffix('.ckpt')}.ckpt"
 
-def save_checkpoint(athena, optimizer=None, scheduler=None):
-    
+def save_checkpoint(athena, step=0, optimizer=None, scheduler=None, scaler=None):
     checkpoint = {
         'config': athena.config,
         'weights': athena.state_dict(),
+        'step': step,
         'optimizer': optimizer.state_dict() if optimizer is not None else None,
-        'scheduler': scheduler.state_dict() if scheduler is not None else None
+        'scheduler': scheduler.state_dict() if scheduler is not None else None,
+        'scaler': scaler.state_dict() if scaler is not None else None,
     }
-
     path = get_checkpoint_path(athena.name)
-    if not os.path.exists(os.path.dirname(path)):
-        os.mkdir(os.path.dirname(path))
-
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     if os.path.exists(path):
-        os.rename(path, path + ".old")
-    
+        os.replace(path, path + ".old")
     torch.save(checkpoint, path)
 
-def load_checkpoint(name):
-    
-    path = get_checkpoint_path(name)
-    checkpoint = torch.load(path, weights_only=False)
-    
-    with EmptyInitOnDevice(device):
-        athena = Athena(checkpoint["config"]).to(device)
 
-    athena.load_state_dict(checkpoint["weights"], strict=False)
+def select_amp(dev: torch.device):
+    """
+    Returns:
+        amp_dtype (torch.dtype), use_scaler (bool)
+
+    CUDA: Prefer BF16 if supported; otherwise FP16 + GradScaler
+    MPS: FP16 autocast; no GradScaler
+    CPU: BF16 autocast when available; no GradScaler
+    """
+    if dev.type == "cuda":
+        return (torch.bfloat16, False) if torch.cuda.is_bf16_supported() else (torch.float16, True)
+    elif dev.type == "mps":
+        return torch.float16, False
+    else:
+        return torch.bfloat16, False
+
+
+def load_checkpoint(name):
+    path = get_checkpoint_path(name)
+    checkpoint = torch.load(path, map_location=device, weights_only=False)
+
+    with EmptyInitOnDevice(device):
+        athena = Athena(checkpoint['config']).to(device)
+
+    missing, unexpected = athena.load_state_dict(checkpoint['weights'], strict=False)
+    if missing or unexpected:
+        print(f"[WARN] Missing keys: {missing}\n[WARN] Unexpected keys: {unexpected}")
 
     optimizer = AdamW(athena.parameters(), lr=3e-5)
-    if checkpoint['optimizer'] is not None:
+    if checkpoint.get('optimizer') is not None:
         optimizer.load_state_dict(checkpoint['optimizer'])
-        
+
     warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=50)
-    main_sched = ConstantLR(optimizer, factor=1.0, total_iters=950)
-    scheduler = SequentialLR(optimizer, schedulers=[warmup, main_sched], milestones=[50])
-    
-    if checkpoint['scheduler'] is not None:
+    main = ConstantLR(optimizer, factor=1.0, total_iters=950)
+    scheduler = SequentialLR(optimizer, schedulers=[warmup, main], milestones=[50])
+    if checkpoint.get('scheduler') is not None:
         scheduler.load_state_dict(checkpoint['scheduler'])
-        
-    return athena, optimizer, scheduler
+
+    amp_dtype, use_scaler = select_amp(device)
+    scaler = GradScaler(enabled=use_scaler)
+    if use_scaler and checkpoint.get('scaler') is not None:
+        scaler.load_state_dict(checkpoint['scaler'])
+
+    autocast_ctx = torch.amp.autocast(device_type=device.type, dtype=amp_dtype)
+
+    return athena, optimizer, scheduler, scaler, autocast_ctx
