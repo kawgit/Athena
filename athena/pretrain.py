@@ -109,33 +109,28 @@ class Pretrainer():
      
             step_info["step"] = self.run.summary.get("step", 0) + 1
 
-            with Timer("\tPrepping batch"):
-                batch = batch.to(device, non_blocking=True)
-                batch_x = batch[:, :-1].contiguous()
-                batch_y = batch[:, 1:].contiguous()
-            
+            batch = batch.to(device, non_blocking=True)
+            batch_x = batch[:, :-1].contiguous()
+            batch_y = batch[:, 1:].contiguous()
+        
             # Zero gradients only at start of accumulation cycle
             if self._accumulation_counter == 0:
-                with Timer("\tZeroing gradients"):
-                    self.optimizer.zero_grad(set_to_none=True)
+                self.optimizer.zero_grad(set_to_none=True)
 
-            with Timer("\tForward pass"):
-                with self.autocast_ctx:
-                    output = self.athena_compiled(batch_x)["logits"]
-                    loss = self.criterion(output, batch_y) / self.backwards_every
+            with self.autocast_ctx:
+                output = self.athena_compiled(batch_x)["logits"]
+                loss = self.criterion(output, batch_y) / self.backwards_every
 
-            with Timer("\tBackward pass"):
-                step_info["loss"] = loss.detach().item() * self.backwards_every
-                step_info["lr"] = self.optimizer.param_groups[0]['lr']
-                self.scaler.scale(loss).backward()
+            step_info["loss"] = loss.detach().item() * self.backwards_every
+            step_info["lr"] = self.optimizer.param_groups[0]['lr']
+            self.scaler.scale(loss).backward()
 
             self._accumulation_counter += 1
 
             if self._accumulation_counter >= self.backwards_every:
-                with Timer("\tStepping optimizer"):
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
-                    self._accumulation_counter = 0
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                self._accumulation_counter = 0
         
         self.scheduler.step()
         
