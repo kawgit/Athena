@@ -11,7 +11,19 @@ from athena.utils import Throttle, Timer
 
 class Pretrainer():
     
-    def __init__(self, athena: Athena, optimizer: AdamW, scheduler: lr_scheduler, scaler: GradScaler, autocast_ctx: autocast, batch_size=4, log_every=0, save_every=120, valid_every=float("inf")):
+    def __init__(
+        self,
+        athena: Athena,
+        optimizer: AdamW,
+        scheduler: lr_scheduler,
+        scaler: GradScaler,
+        autocast_ctx: autocast,
+        batch_size=4,
+        backwards_every=5,
+        log_every=0,
+        save_every=120,
+        valid_every=float("inf")
+    ):
         self.athena = athena
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -20,10 +32,12 @@ class Pretrainer():
         self.autocast_ctx = autocast_ctx
         
         self.batch_size = batch_size
+        self.backwards_every = backwards_every
         self.save_every = save_every
         self.valid_every = valid_every
         self.log_every = log_every
         
+        self._accumulation_counter = 0
         
     def train(self, epoch_limit, time_limit=float("inf")):
         self.athena.update_config(wandb_id=self.athena.wandb_id or wandb.util.generate_id())
@@ -92,24 +106,38 @@ class Pretrainer():
         self.athena_compiled.train()
 
         with Timer() as step_timer:
+     
             step_info["step"] = self.run.summary.get("step", 0) + 1
-            
-            batch = batch.to(device, non_blocking=True)
-            batch_x = batch[:, :-1].contiguous()
-            batch_y = batch[:, 1:].contiguous()
-            
-            self.optimizer.zero_grad(set_to_none=True)
 
-            with self.autocast_ctx:
-                output = self.athena_compiled(batch_x)["logits"]
-                loss = self.criterion(output, batch_y)
-
-            step_info["loss"] = loss.detach().item()
-            step_info["lr"] = self.optimizer.param_groups[0]['lr']
+            with Timer("\tPrepping batch"):
+                batch = batch.to(device, non_blocking=True)
+                batch_x = batch[:, :-1].contiguous()
+                batch_y = batch[:, 1:].contiguous()
             
-            self.scaler.scale(loss).backward()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            # Zero gradients only at start of accumulation cycle
+            if self._accumulation_counter == 0:
+                with Timer("\tZeroing gradients"):
+                    self.optimizer.zero_grad(set_to_none=True)
+
+            with Timer("\tForward pass"):
+                with self.autocast_ctx:
+                    output = self.athena_compiled(batch_x)["logits"]
+                    loss = self.criterion(output, batch_y) / self.backwards_every
+
+            with Timer("\tBackward pass"):
+                step_info["loss"] = loss.detach().item() * self.backwards_every
+                step_info["lr"] = self.optimizer.param_groups[0]['lr']
+                self.scaler.scale(loss).backward()
+
+            self._accumulation_counter += 1
+
+            if self._accumulation_counter >= self.backwards_every:
+                with Timer("\tStepping optimizer"):
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                    self._accumulation_counter = 0
+        
+        self.scheduler.step()
         
         step_info["step_time"] = float(step_timer)
         
@@ -119,8 +147,6 @@ class Pretrainer():
         
         step_info["training_time"] = self.run.summary.get("training_time", 0) + step_info["step_time"]
         step_info["epoch"] = step_info["step"] / steps_per_epoch
-
-        self.scheduler.step()
 
         self.run.summary["step"] = step_info["step"]
         self.run.summary["step_time"] = step_info["step_time"]
