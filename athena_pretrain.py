@@ -9,7 +9,7 @@ argparser.add_argument("--backwards_every", type=int, default=1)
 argparser.add_argument("--log_every", type=int, default=0)
 argparser.add_argument("--save_every", type=int, default=120)
 argparser.add_argument("--valid_every", type=int, default=float("inf"))
-argparser.add_argument("--epoch_limit", type=int, default=1)
+argparser.add_argument("--epoch_limit", type=float, default=float("inf"))
 argparser.add_argument("--time_limit", type=int, default=float("inf"))
 args = argparser.parse_args()
 
