@@ -11,7 +11,7 @@ from athena.utils import EmptyInitOnDevice
 def get_checkpoint_path(name):
     return f"checkpoints/{name.removesuffix('.ckpt')}.ckpt"
 
-def save_checkpoint(athena, optimizer=None, scheduler=None, scaler=None):
+def save_checkpoint(athena, optimizer=None, scheduler=None, scaler=None, best=False):
     checkpoint = {
         'config': athena.config,
         'weights': athena.state_dict(),
@@ -24,6 +24,10 @@ def save_checkpoint(athena, optimizer=None, scheduler=None, scaler=None):
     if os.path.exists(path):
         os.replace(path, path + ".old")
     torch.save(checkpoint, path)
+    
+    if best:
+        best_path = get_checkpoint_path(athena.name + ".best")
+        torch.save(checkpoint, best_path)
 
 
 def select_amp(dev: torch.device):

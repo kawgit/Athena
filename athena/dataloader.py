@@ -1,28 +1,38 @@
 import torch
-from athena.tokenizer import tokenizer
 from datasets import load_dataset, load_from_disk, Dataset, DatasetDict
 from datasets.config import HF_DATASETS_CACHE
 from athena.utils import Timer
-from settings import pretrain_dataset_name, pretrain_dataset_hfpath, pretrain_dataset_hfsplit, pretrain_dataset_hfcolumn
+from settings import pretrain_dataset_name, pretrain_dataset_hfpath, pretrain_dataset_hfdir, pretrain_dataset_hfcolumn
 from torch.utils.data import DataLoader, Subset
 import os
 import random
 
-def load_dataloader_pretrain(context_size, batch_size, resume_epoch=0):
+def load_raw_dataset():
+    cache_path = os.path.join(HF_DATASETS_CACHE, pretrain_dataset_name)
+
+    if os.path.exists(cache_path):
+        dataset = load_from_disk(cache_path)
+    else:
+        dataset = load_dataset(pretrain_dataset_hfpath, data_dir=pretrain_dataset_hfdir)
+        dataset.set_format(type="torch", columns=[pretrain_dataset_hfcolumn])
+        dataset.save_to_disk(cache_path)
     
-    scrambled_dataset_name = f"{pretrain_dataset_name}_scrambled"
+    return dataset["train"]
+
+def load_dataloader_pretrain(context_size, batch_size, resume_epoch=0):
+    from athena.tokenizer import tokenizer
+    
+    scrambled_dataset_name = f"{pretrain_dataset_name}_scrambled_{context_size}"
     cache_path = os.path.join(HF_DATASETS_CACHE, scrambled_dataset_name)
     
     if os.path.exists(cache_path):
         dataset = load_from_disk(cache_path)
     else:
-        
         with Timer("Shuffling pretrain dataset"):
-        
-            dataset = load_dataset(pretrain_dataset_hfpath, split=pretrain_dataset_hfsplit)
+            raw_dataset = load_raw_dataset()
             
             chunks = []
-            for record in dataset:
+            for record in raw_dataset:
                 text = record[pretrain_dataset_hfcolumn]
                 text_tokenized = tokenizer(text)["input_ids"]
                 chunks.extend([text_tokenized[i : i + context_size] for i in range(0, len(text_tokenized) - context_size + 1, context_size)])

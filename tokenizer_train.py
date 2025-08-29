@@ -1,4 +1,3 @@
-from datasets import load_dataset
 from string import ascii_letters, digits, punctuation
 from tokenizers import Regex
 from tokenizers import Tokenizer
@@ -9,12 +8,13 @@ from tokenizers.trainers import BpeTrainer
 import json
 import os
 
-from settings import pretrain_dataset_hfpath, tokenizer_path
+from athena.dataloader import load_raw_dataset
+from settings import tokenizer_path, pretrain_dataset_hfcolumn
 
-dataset = load_dataset(pretrain_dataset_hfpath, split="train")
+dataset = load_raw_dataset()
 def get_training_corpus():
     for example in dataset:
-        yield example["content"]
+        yield example[pretrain_dataset_hfcolumn]
 
 tokenizer = Tokenizer(BPE(unk_token="<|unknown|>", byte_fallback=True))
 tokenizer.normalizer = NFKC()
