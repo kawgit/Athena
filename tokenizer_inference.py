@@ -6,21 +6,10 @@ if __name__ == "__main__":
         "HelloWorld",
         "fooBarBaz",
         "end-to-end",
-        """And so they began. Harry, at least, felt extremely foolish, staring
-blankly at the crystal ball, trying to keep his mind empty when thoughts
-such as "this is stupid" kept drifting across it. It didn't help that
-Ron kept breaking into silent giggles and Hermione kept tutting.
-
-"Seen anything yet?" Harry asked them after a quarter of an hour's quiet
-crystal gazing.
-
-"Yeah, there's a burn on this table," said Ron, pointing. "Someone's
-spilled their candle."
-
-"This is such a waste of time," Hermione hissed. "I could be practicing
-something useful. I could be catching up on Cheering Charms --"
-
-Professor Trelawney rustled past."""
+        """Worked with a small team of professional developers to create a new chess engine: Torch, as of now the world's 2nd strongest chess engine. 
+Wrote code to efficiently execute sparse neural networks by shuffling neurons and skipping the computation of connections that don’t affect the output. 
+My contributions resulted in an immediate 20% increase in network execution speed.
+Before my changes, a 100% increase in network size would result in a 100% increase in computational cost. After my changes, a 100% increase in network size only increased computational cost by 35%. This allowed us to greatly expand the size of our neural networks."""
     ]
 
     for text in inputs:
