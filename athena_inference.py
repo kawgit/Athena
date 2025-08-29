@@ -16,7 +16,7 @@ args = argparser.parse_args()
 athena = load_checkpoint(args.name)[0]
 athena = AthenaCompiled(athena)
 
-text = "Harry"
+text = "In"
 time_of_start = time.time()
 time_of_last_print = time.time()
 time_between_prints = 0.1
@@ -25,7 +25,7 @@ len_of_last_print = 0
 text_tokens = tokenizer.encode(text)
 
 with torch.inference_mode(), torch.autocast(device.type):
-    for generation in athena.generate([text_tokens], 8 * athena.context_size, stream=True, temperature=1):
+    for generation in athena.generate([text_tokens], 8 * athena.context_size, stream=True, temperature=0.5):
 
         time_elapsed = time.time() - time_of_last_print
 
