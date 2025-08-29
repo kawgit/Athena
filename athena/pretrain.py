@@ -75,6 +75,16 @@ class Pretrainer():
             for batch in train_dataloader:
                 step_info = self.step(batch, total_steps_in_epoch)
         
+                with valid_throttle as should_run:
+                    if should_run:
+                        step_info["valid_loss"] = self.validate(valid_dataloader)
+                        prev_best = self.run.summary.get("best_valid_loss", float("inf"))
+                        if step_info["valid_loss"] < prev_best:
+                            step_info["best_valid_loss"] = step_info["valid_loss"]
+                            save_checkpoint(self.athena, self.optimizer, self.scheduler, self.scaler, best=True)
+                
+                wandb.log(step_info)
+                        
                 with log_throttle as should_run:
                     if should_run:
                         print(
@@ -84,15 +94,6 @@ class Pretrainer():
                             f"Step Time {step_info['step_time']:.4f} "
                             f"LR {step_info['lr']:.2e}"
                         )
-                        wandb.log(step_info)
-
-                with valid_throttle as should_run:
-                    if should_run:
-                        step_info["valid_loss"] = self.validate(valid_dataloader)
-                        wandb.log({
-                            "step": step_info["step"],
-                            "valid_loss": step_info["valid_loss"]
-                        })
 
                 with save_throttle as should_run:
                     if should_run:
