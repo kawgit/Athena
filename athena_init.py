@@ -5,9 +5,9 @@ from athena.utils import generate_model_name
 
 argparser = ArgumentParser(description="Script for initializing athena models with random weights")
 argparser.add_argument("--name", type=str, default=None)
-argparser.add_argument("--embedding_size", type=int, default=768)
-argparser.add_argument("--hidden_size", type=int, default=1536)
-argparser.add_argument("--num_layers", type=int, default=6)
+argparser.add_argument("--embedding_size", type=int, default=1024)
+argparser.add_argument("--hidden_size", type=int, default=2048)
+argparser.add_argument("--num_layers", type=int, default=4)
 argparser.add_argument("--num_heads", type=int, default=12)
 argparser.add_argument("--head_size", type=int, default=16)
 argparser.add_argument("--key_size", type=int, default=12)
