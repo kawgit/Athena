@@ -9,6 +9,8 @@ from athena.device import device
 from athena.model import Athena, AthenaCompiled
 from athena.utils import Throttle, Timer
 
+from settings import pretrain_dataset_total_chars
+
 class Pretrainer():
     
     def __init__(
@@ -63,17 +65,21 @@ class Pretrainer():
             
         while True:
             train_dataloader, valid_dataloader = load_dataloader_pretrain(
-                round(self.athena.context_size * self.athena.context_multiple) + 1,
+                round(self.athena.context_size * self.athena.context_multiple),
                 self.batch_size,
-                resume_epoch=self.run.summary.get("epoch", 0)
+                10000,
+                resume_chars=0 # TODO fix resume logic
             )
             
-            total_steps_in_epoch = round(len(train_dataloader) / (1 - self.run.summary.get("epoch", 0) % 1))
-
             print("Starting epoch...")
 
             for batch in train_dataloader:
-                step_info = self.step(batch, total_steps_in_epoch)
+                
+                step_info = {
+                    "epoch": train_dataloader.dataset.curr_offset_chars / pretrain_dataset_total_chars
+                }
+                
+                self.step(batch, step_info)
         
                 with valid_throttle as should_run:
                     if should_run:
@@ -88,7 +94,8 @@ class Pretrainer():
                 with log_throttle as should_run:
                     if should_run:
                         print(
-                            f"Step {step_info['step']} out of {total_steps_in_epoch} "
+                            f"Step {step_info['step']} "
+                            f"Epoch {step_info['epoch']} "
                             f"Time {step_info['training_time']:.4f} "
                             f"Loss {step_info['loss']:.4f} "
                             f"Step Time {step_info['step_time']:.4f} "
@@ -102,8 +109,7 @@ class Pretrainer():
                 if self.run.summary.get("epoch", 0) >= epoch_limit or self.run.summary.get("training_time", 0) >= time_limit:
                     return
                 
-    def step(self, batch, steps_per_epoch):
-        step_info = {}
+    def step(self, batch, step_info):
         self.athena_compiled.train()
 
         with Timer() as step_timer:
@@ -141,14 +147,6 @@ class Pretrainer():
             step_info["step_time"] = self.run.summary.get("step_time", float("inf"))
         
         step_info["training_time"] = self.run.summary.get("training_time", 0) + step_info["step_time"]
-        step_info["epoch"] = step_info["step"] / steps_per_epoch
-
-        self.run.summary["step"] = step_info["step"]
-        self.run.summary["step_time"] = step_info["step_time"]
-        self.run.summary["training_time"] = step_info["training_time"]
-        self.run.summary["epoch"] = step_info["epoch"]
-
-        return step_info
 
     def validate(self, valid_dataloader):
         self.athena_compiled.eval()

@@ -1,86 +1,155 @@
 import torch
-from datasets import load_dataset, load_from_disk, Dataset, DatasetDict
-from datasets.config import HF_DATASETS_CACHE
-from athena.utils import Timer
-from settings import pretrain_dataset_name, pretrain_dataset_hfpath, pretrain_dataset_hfdir, pretrain_dataset_hfcolumn
-from torch.utils.data import DataLoader, Subset
-import os
-import random
+from torch.utils.data import IterableDataset, DataLoader
+from datasets import load_dataset
+from typing import Optional, List
 
-def load_raw_dataset():
-    cache_path = os.path.join(HF_DATASETS_CACHE, pretrain_dataset_name)
+from settings import (
+    pretrain_dataset_hfpath,
+    pretrain_dataset_hfdir,
+    pretrain_dataset_hfcolumn,
+    pretrain_dataset_delimiter,
+)
+from athena.tokenizer import tokenizer
 
-    if os.path.exists(cache_path):
-        dataset = load_from_disk(cache_path)
-    else:
-        dataset = load_dataset(pretrain_dataset_hfpath, data_dir=pretrain_dataset_hfdir)
-        dataset.set_format(type="torch", columns=[pretrain_dataset_hfcolumn])
-        dataset.save_to_disk(cache_path)
-    
-    return dataset["train"]
 
-def load_dataloader_pretrain(context_size, batch_size, resume_epoch=0):
-    from athena.tokenizer import tokenizer
-    
-    scrambled_dataset_name = f"{pretrain_dataset_name}_scrambled_{context_size}"
-    cache_path = os.path.join(HF_DATASETS_CACHE, scrambled_dataset_name)
-    
-    if os.path.exists(cache_path):
-        dataset = load_from_disk(cache_path)
-    else:
-        with Timer("Shuffling pretrain dataset"):
-            raw_dataset = load_raw_dataset()
+def _encode_ids(text: str) -> List[int]:
+    try:
+        return tokenizer.encode(text, add_special_tokens=False)
+    except TypeError:
+        return tokenizer.encode(text)
+
+def _delimiter_str() -> str:
+    return pretrain_dataset_delimiter or ""
+
+
+class CharOffsetChunkIterable(IterableDataset):
+    """
+    Character-sliced global stream -> tokenized -> emits fixed-length token chunks of size (C+1).
+    Each yielded item is a 1D LongTensor of length (context_size+1).
+    """
+    def __init__(
+        self,
+        context_size: int,
+        start_offset_chars: int = 0,
+        take_chars: Optional[int] = None,
+    ):
+        super().__init__()
+        self.context_size = int(context_size)
+        self.emit_len = self.context_size + 1
+        self.start_offset_chars = max(0, int(start_offset_chars))
+        self.curr_offset_chars = self.start_offset_chars
+        self.take_chars = None if take_chars is None else int(take_chars)
+        self.delim = _delimiter_str()
+
+    def __iter__(self):
+        ds = load_dataset(
+            pretrain_dataset_hfpath,
+            data_dir=pretrain_dataset_hfdir,
+            split="train",
+            streaming=True,
+        )
+
+        skip = self.start_offset_chars
+        remaining_chars = self.take_chars  # None => unlimited
+        token_buf: List[int] = []
+
+        for ex in ds:
+            segment = (ex[pretrain_dataset_hfcolumn] or "") + self.delim
+            seg_len = len(segment)
+
+            # Fast character skip
+            if skip:
+                if skip >= seg_len:
+                    skip -= seg_len
+                    continue
+                segment = segment[skip:]
+                seg_len = len(segment)
+                skip = 0
+
+            # Character take budget
+            if remaining_chars is not None:
+                if remaining_chars <= 0:
+                    break
+                if remaining_chars < seg_len:
+                    segment = segment[:remaining_chars]
+                    seg_len = len(segment)
+                    remaining_chars = 0
+                else:
+                    remaining_chars -= seg_len
+
+            # Tokenize only the kept slice
+            ids = _encode_ids(segment)
+            token_buf.extend(ids)
             
-            chunks = []
-            for record in raw_dataset:
-                text = record[pretrain_dataset_hfcolumn]
-                text_tokenized = tokenizer(text)["input_ids"]
-                chunks.extend([text_tokenized[i : i + context_size] for i in range(0, len(text_tokenized) - context_size + 1, context_size)])
-            random.shuffle(chunks)
+            # Linearly interpolate between last char count and next char count
+            num_tokens = len(token_buf)
+            num_emits = (num_tokens - 1) // self.context_size
             
-            train_chunks = chunks[:int(len(chunks) * 0.98)]
-            valid_chunks = chunks[int(len(chunks) * 0.98):]
+            if num_emits == 0:
+                self.curr_offset_chars += seg_len
+                continue
             
-            train_dataset = Dataset.from_dict({"input_ids": train_chunks})
-            valid_dataset = Dataset.from_dict({"input_ids": valid_chunks})
-            
-            train_dataset.set_format(type="torch", columns=["input_ids"])
-            valid_dataset.set_format(type="torch", columns=["input_ids"])
-            
-            dataset = DatasetDict({"train": train_dataset, "valid": valid_dataset})
-            dataset.save_to_disk(cache_path)
+            slope = seg_len / num_emits
+            original_offset = self.curr_offset_chars
+
+            # Emit fixed-length (C+1) chunks; stride = C (overlap by 1)
+            while len(token_buf) >= self.emit_len:
+                chunk = token_buf[:self.emit_len]
+                yield torch.tensor(chunk, dtype=torch.long)  # shape: (C+1,)
+                token_buf = token_buf[self.context_size:]    # keep last token for next shift
+                
+                # Update current offset
+                self.curr_offset_chars += round(slope)
+                self.curr_offset_chars = min(self.curr_offset_chars, original_offset + seg_len)
     
-    train_dataset = dataset["train"]
-    valid_dataset = dataset["valid"]
-    
-    def collate_input_ids(batch):
-        return torch.stack([example["input_ids"] for example in batch], dim=0)
+def _collate_tokens(batch: List[torch.Tensor]) -> torch.Tensor:
+    # Stacks to shape (B, C+1)
+    return torch.stack(batch, dim=0)
 
-    train_dataset = Subset(train_dataset, range(int(resume_epoch * len(train_dataset)) % len(train_dataset), len(train_dataset)))
 
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_input_ids)
-    valid_dataloader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_input_ids)
-    
-    return train_dataloader, valid_dataloader
+def load_dataloader_pretrain(
+    context_size: int,
+    batch_size: int,
+    valid_chars: int,      # first N chars go to validation
+    resume_chars: int = 0  # then skip this many chars before training
+):
+    """
+    Whole dataset is treated as one big string with a delimiter between records.
+    Validation takes the first `valid_chars` characters.
+    Training starts at offset `valid_chars + resume_chars` and streams the rest.
 
-def load_dataloader_rl(split="train", batch_size=1):
-    assert split in {"train", "valid"}, f"Invalid split: {split}"
+    Returns:
+        train_loader, valid_loader
+        where each batch is a LongTensor of shape (B, C+1)
+    """
+    if valid_chars < 0 or resume_chars < 0:
+        raise ValueError("valid_chars and resume_chars must be >= 0")
 
-    cache_path = os.path.join(HF_DATASETS_CACHE, "orca_math_split")
-    split_path = os.path.join(cache_path, split)
+    valid_iterable = CharOffsetChunkIterable(
+        context_size=context_size,
+        start_offset_chars=0,
+        take_chars=valid_chars,
+    )
+    train_iterable = CharOffsetChunkIterable(
+        context_size=context_size,
+        start_offset_chars=valid_chars + resume_chars,
+        take_chars=None,
+    )
 
-    if os.path.exists(split_path):
-        dataset = load_from_disk(split_path)
-    else:
-        full = load_dataset("microsoft/orca-math-word-problems-200k", "default")["train"]
-        result = full.train_test_split(test_size=0.1, seed=42)
-        split_map = {"train": result["train"], "valid": result["test"]}
-
-        os.makedirs(cache_path, exist_ok=True)
-        split_map["train"].save_to_disk(os.path.join(cache_path, "train"))
-        split_map["valid"].save_to_disk(os.path.join(cache_path, "valid"))
-
-        dataset = split_map[split]
-
-    dataset.set_format(type="torch", columns=["question", "answer"])
-    return DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=False, drop_last=True)
+    train_loader = DataLoader(
+        train_iterable,
+        batch_size=batch_size,
+        collate_fn=_collate_tokens,
+        num_workers=0,
+        pin_memory=True,
+        drop_last=True,
+    )
+    valid_loader = DataLoader(
+        valid_iterable,
+        batch_size=batch_size,
+        collate_fn=_collate_tokens,
+        num_workers=0,
+        pin_memory=True,
+        drop_last=True,
+    )
+    return train_loader, valid_loader
