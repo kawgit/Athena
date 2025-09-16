@@ -46,7 +46,6 @@ class CharOffsetChunkIterable(IterableDataset):
             pretrain_dataset_hfpath,
             data_dir=pretrain_dataset_hfdir,
             split="train",
-            streaming=True,
         )
 
         skip = self.start_offset_chars
@@ -141,7 +140,6 @@ def load_dataloader_pretrain(
         batch_size=batch_size,
         collate_fn=_collate_tokens,
         num_workers=0,
-        pin_memory=True,
         drop_last=True,
     )
     valid_loader = DataLoader(
@@ -149,7 +147,6 @@ def load_dataloader_pretrain(
         batch_size=batch_size,
         collate_fn=_collate_tokens,
         num_workers=0,
-        pin_memory=True,
         drop_last=True,
     )
     return train_loader, valid_loader

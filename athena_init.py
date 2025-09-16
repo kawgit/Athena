@@ -7,7 +7,7 @@ argparser = ArgumentParser(description="Script for initializing athena models wi
 argparser.add_argument("--name", type=str, default=None)
 argparser.add_argument("--embedding_size", type=int, default=768)
 argparser.add_argument("--hidden_size", type=int, default=1536)
-argparser.add_argument("--num_layers", type=int, default=4)
+argparser.add_argument("--num_layers", type=int, default=6)
 argparser.add_argument("--num_heads", type=int, default=12)
 argparser.add_argument("--head_size", type=int, default=16)
 argparser.add_argument("--key_size", type=int, default=12)

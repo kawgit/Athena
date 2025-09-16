@@ -6,17 +6,17 @@ import torch
 
 from athena.device import device
 from athena.model import Athena
+from athena.optimizer import MultiOptimizer
 from athena.utils import EmptyInitOnDevice
 
 def get_checkpoint_path(name):
     return f"checkpoints/{name.removesuffix('.ckpt')}.ckpt"
 
-def save_checkpoint(athena, optimizer=None, scheduler=None, scaler=None, best=False):
+def save_checkpoint(athena, optimizer=None, scaler=None, best=False):
     checkpoint = {
         'config': athena.config,
         'weights': athena.state_dict(),
         'optimizer': optimizer.state_dict() if optimizer is not None else None,
-        'scheduler': scheduler.state_dict() if scheduler is not None else None,
         'scaler': scaler.state_dict() if scaler is not None else None,
     }
     path = get_checkpoint_path(athena.name)
@@ -44,17 +44,15 @@ def load_checkpoint(name):
         athena = Athena(checkpoint['config']).to(device)
 
     missing, unexpected = athena.load_state_dict(checkpoint['weights'], strict=False)
-    if missing or unexpected:
-        print(f"[WARN] Missing keys: {missing}\n[WARN] Unexpected keys: {unexpected}")
+    if missing:
+        print(f"[WARN] Missing keys: {missing}")
+    if unexpected:
+        print(f"[WARN] Unexpected keys: {unexpected}")
 
-    optimizer = AdamW(athena.parameters(), lr=3e-5)
+    optimizer = MultiOptimizer(athena.named_parameters())
     if checkpoint.get('optimizer') is not None:
         optimizer.load_state_dict(checkpoint['optimizer'])
-
-    scheduler = ConstantLR(optimizer, factor=1.0)
-    if checkpoint.get('scheduler') is not None:
-        scheduler.load_state_dict(checkpoint['scheduler'])
-
+        
     amp_dtype, use_scaler = select_amp(device)
     scaler = GradScaler(enabled=use_scaler)
     if use_scaler and checkpoint.get('scaler') is not None:
@@ -62,4 +60,4 @@ def load_checkpoint(name):
 
     autocast_ctx = torch.amp.autocast(device_type=device.type, dtype=amp_dtype)
 
-    return athena, optimizer, scheduler, scaler, autocast_ctx
+    return athena, optimizer, scaler, autocast_ctx

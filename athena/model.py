@@ -15,28 +15,26 @@ class Athena(nn.Module):
         self.config = config
         self.__dict__.update(config)
         
-        self.max_qs = round(self.context_size * self.context_multiple)
-        self.max_ks = self.null_len + self.max_qs
+        self.max_tokens = round(self.context_size * self.context_multiple)
         
         self.register_buffer(
             "causal_buffer",
-            torch.zeros((self.max_qs, self.max_ks), dtype=torch.bool),
+            torch.zeros((self.max_tokens, self.max_tokens), dtype=torch.bool),
             persistent=False
         )
         
-        for q_index in range(self.max_qs):
-            self.causal_buffer[q_index][:self.null_len] = True
-            self.causal_buffer[q_index][max(0, self.null_len + q_index + 1 - self.context_size):self.null_len + q_index + 1] = True
+        for q_index in range(self.max_tokens):
+            self.causal_buffer[q_index][max(0, q_index + 1 - self.context_size):q_index + 1] = True
 
         self.register_buffer(
             "cos_buffer",
-            torch.zeros((self.max_qs, self.key_size), dtype=torch.float32),
+            torch.zeros((self.max_tokens, self.key_size), dtype=torch.float32),
             persistent=False
         )
         
         self.register_buffer(
             "sin_buffer",
-            torch.zeros((self.max_qs, self.key_size), dtype=torch.float32),
+            torch.zeros((self.max_tokens, self.key_size), dtype=torch.float32),
             persistent=False
         )
         
@@ -47,7 +45,7 @@ class Athena(nn.Module):
         exponent = (-2.0 / self.key_size) * offset
         scales = torch.pow(10000, exponent)
 
-        m = torch.arange(self.max_qs)
+        m = torch.arange(self.max_tokens)
         angles = m[:, None] * scales[None, :]
         
         self.cos_buffer = torch.cos(angles)
@@ -57,7 +55,7 @@ class Athena(nn.Module):
         self.table = nn.Embedding(self.vocab_size, self.embedding_size)
         self.sas = nn.ModuleList([AthenaSA(self.config) for i in range(self.num_layers)])
         self.ffns = nn.ModuleList([AthenaFFN(self.config) for i in range(self.num_layers)])
-        self.norm = nn.RMSNorm(self.embedding_size, eps=1e-05)
+        self.norm = nn.RMSNorm(self.embedding_size, eps=1e-05, elementwise_affine=False)
         self.vocab_proj = nn.Linear(self.embedding_size, self.vocab_size, bias=False)
 
     def update_config(self, **kwargs):
@@ -82,7 +80,7 @@ class Athena(nn.Module):
         q_start = past_kvs[0].shape[3] if use_cache else 0
         k_len = q_start + q_len
         
-        causal_buffer = self.causal_buffer[q_start:k_len, :self.null_len + k_len]
+        causal_buffer = self.causal_buffer[q_start:k_len, :k_len]
         cos_buffer = (self.cos_buffer[q_start:k_len], self.cos_buffer[:k_len])
         sin_buffer = (self.sin_buffer[q_start:k_len], self.sin_buffer[:k_len])
         
@@ -108,6 +106,7 @@ class Athena(nn.Module):
         
         if return_logits:
             result["logits"] = self.vocab_proj(embeddings)
+            # result["logits"] = 15 * result["logits"] / (result["logits"].square() + 225).sqrt()
         
         if create_cache:
             result["present_kvs"] = present_kvs
@@ -143,11 +142,9 @@ class AthenaSA(nn.Module):
         self.config = config
         self.__dict__.update(config)
 
-        self.norm = nn.RMSNorm(self.embedding_size, eps=1e-05)
+        self.norm = nn.RMSNorm(self.embedding_size, eps=1e-05, elementwise_affine=False)
         self.qkv_proj = nn.Linear(self.embedding_size, 2 * self.key_size * self.num_heads + self.head_size * self.num_heads, bias=False)
         self.out_proj = nn.Linear(self.num_heads * self.head_size, self.embedding_size, bias=False)
-        self.null_k = nn.Parameter(torch.normal(0, .1, (self.num_heads, self.null_len, self.key_size)))
-        self.null_v = nn.Parameter(torch.normal(0, .1, (self.num_heads, self.null_len, self.head_size)))
 
     def update_config(self, **kwargs):
         for key, value in kwargs.items():
@@ -184,13 +181,6 @@ class AthenaSA(nn.Module):
         queries = self.rotate(queries, cos_buffer[0], sin_buffer[0])
         keys = self.rotate(keys, cos_buffer[1], sin_buffer[1])
         
-        if self.null_len != 0:
-            null_k = self.null_k.unsqueeze(0).expand(batch_size, -1, -1, -1)
-            null_v = self.null_v.unsqueeze(0).expand(batch_size, -1, -1, -1)
-            
-            keys = torch.cat((null_k, keys), dim=-2)
-            values = torch.cat((null_v, values), dim=-2)
-        
         queries = queries.contiguous()
         keys = keys.contiguous()
         values = values.contiguous()
@@ -221,7 +211,7 @@ class AthenaFFN(nn.Module):
         self.config = config
         self.__dict__.update(config)
 
-        self.norm = nn.RMSNorm(self.embedding_size, eps=1e-05)
+        self.norm = nn.RMSNorm(self.embedding_size, eps=1e-05, elementwise_affine=False)
         self.up_proj = nn.Linear(self.embedding_size, 2 * self.hidden_size, bias=False)
         self.down_proj = nn.Linear(self.hidden_size, self.embedding_size, bias=False)
     

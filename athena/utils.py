@@ -1,3 +1,5 @@
+from bisect import bisect_left
+from typing import Callable, List, Tuple
 import math
 import matplotlib.pyplot as plt
 import numpy as np
@@ -121,3 +123,60 @@ def save_tensor_as_image(tensor, filename="output.png", cmap="viridis"):
     
     plt.imsave(filename, norm_tensor, cmap=cmap)
     print(f"Image saved to {filename}")
+
+def get_param_by_path(model, path: str):
+    """Return parameter by dotted path string."""
+    cur = model
+    for name in path.split("."):
+        cur = getattr(cur, name)
+    return cur
+
+def linear_interpolator(*points: Tuple[float, float]) -> Callable[[float], float]:
+    """
+    Given (x, y) points as separate arguments, return a function f(x) that
+    linearly interpolates between them.
+    
+    Example:
+        f = linear_interpolator((0,0), (1,2), (2,4))
+        f(0.5) -> 1.0
+    """
+    if not points:
+        raise ValueError("At least one point must be provided")
+        
+    # Sort by x just in case
+    points = sorted(points, key=lambda p: p[0])
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+
+    def f(x: float) -> float:
+        # Clamp at endpoints
+        if x <= xs[0]:
+            return ys[0]
+        if x >= xs[-1]:
+            return ys[-1]
+        
+        # Find interval
+        idx = bisect_left(xs, x)
+        x0, y0 = xs[idx - 1], ys[idx - 1]
+        x1, y1 = xs[idx], ys[idx]
+        
+        # Linear interpolation
+        return y0 + (x - x0) * (y1 - y0) / (x1 - x0)
+
+    return f
+
+def scale_interpolator(interpolator, scale):
+    return lambda epoch: scale * interpolator(epoch)
+
+def ith_element(t: torch.Tensor, i: int):
+    # bounds check (optional)
+    if not (0 <= i < t.numel()):
+        raise IndexError("i out of range")
+
+    if t.is_contiguous():
+        # O(1): just a view, no copy
+        return t.view(-1)[i]
+    else:
+        # O(rank): compute the multi-dim index, no full flatten/copy
+        idx = torch.unravel_index(torch.tensor(i, device=t.device), t.shape)
+        return t[idx]

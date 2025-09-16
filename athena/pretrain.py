@@ -1,7 +1,10 @@
+import re
+import torch
 import torch.nn.functional as functional
 import wandb
+import random
 from torch.amp import autocast, GradScaler
-from torch.optim import AdamW, lr_scheduler
+from torch.optim import AdamW
 
 from athena.checkpoint import save_checkpoint
 from athena.dataloader import load_dataloader_pretrain
@@ -17,7 +20,6 @@ class Pretrainer():
         self,
         athena: Athena,
         optimizer: AdamW,
-        scheduler: lr_scheduler,
         scaler: GradScaler,
         autocast_ctx: autocast,
         batch_size=4,
@@ -28,7 +30,6 @@ class Pretrainer():
     ):
         self.athena = athena
         self.optimizer = optimizer
-        self.scheduler = scheduler
         self.scaler = scaler
         self.athena_compiled = AthenaCompiled(self.athena)
         self.autocast_ctx = autocast_ctx
@@ -56,7 +57,7 @@ class Pretrainer():
             pass
         wandb.finish()
         with Timer("Saving checkpoint"):
-            save_checkpoint(self.athena, self.optimizer, self.scheduler, self.scaler)
+            save_checkpoint(self.athena, self.optimizer, self.scaler)
         
     def train_internal(self, epoch_limit, time_limit):
         save_throttle = Throttle("Saving checkpoint", self.save_every)
@@ -67,8 +68,8 @@ class Pretrainer():
             train_dataloader, valid_dataloader = load_dataloader_pretrain(
                 round(self.athena.context_size * self.athena.context_multiple),
                 self.batch_size,
-                10000,
-                resume_chars=0 # TODO fix resume logic
+                valid_chars=round(self.run.summary.get("epoch", 0) * pretrain_dataset_total_chars),
+                resume_chars=round(self.run.summary.get("epoch", 0) * pretrain_dataset_total_chars)
             )
             
             print("Starting epoch...")
@@ -87,7 +88,7 @@ class Pretrainer():
                         prev_best = self.run.summary.get("best_valid_loss", float("inf"))
                         if step_info["valid_loss"] < prev_best:
                             step_info["best_valid_loss"] = step_info["valid_loss"]
-                            save_checkpoint(self.athena, self.optimizer, self.scheduler, self.scaler, best=True)
+                            save_checkpoint(self.athena, self.optimizer, self.scaler, best=True)
                 
                 wandb.log(step_info)
                         
@@ -99,12 +100,11 @@ class Pretrainer():
                             f"Time {step_info['training_time']:.4f} "
                             f"Loss {step_info['loss']:.4f} "
                             f"Step Time {step_info['step_time']:.4f} "
-                            f"LR {step_info['lr']:.2e}"
                         )
 
                 with save_throttle as should_run:
                     if should_run:
-                        save_checkpoint(self.athena, self.optimizer, self.scheduler, self.scaler)
+                        save_checkpoint(self.athena, self.optimizer, self.scaler)
                         
                 if self.run.summary.get("epoch", 0) >= epoch_limit or self.run.summary.get("training_time", 0) >= time_limit:
                     return
@@ -128,18 +128,31 @@ class Pretrainer():
                 loss = self.criterion(output, batch_y) / self.backwards_every
 
             step_info["loss"] = loss.detach().item() * self.backwards_every
-            step_info["lr"] = self.optimizer.param_groups[0]['lr']
             self.scaler.scale(loss).backward()
 
             self._accumulation_counter += 1
 
             if self._accumulation_counter >= self.backwards_every:
-                self.scaler.step(self.optimizer)
+                self.scaler.step(self.optimizer, step_info["epoch"])
                 self.scaler.update()
                 self._accumulation_counter = 0
-        
-        self.scheduler.step()
-        
+            
+            for pg in self.optimizer.param_groups:
+                
+                for k, v in pg.items():
+                    path = re.sub(r"\d+", "X", pg["name"]) + "." + k
+                    if k in ["lr", "momentum"]:
+                        step_info[path] = v
+                
+                weight: torch.Tensor = pg["params"][0].data
+                
+                if "monitored_indices" not in pg:
+                    pg["monitored_indices"] = torch.randperm(weight.numel(), device=weight.device)[:5]
+                    
+                samples = zip(pg["monitored_indices"], weight.view(-1)[pg["monitored_indices"]].detach().cpu())
+                
+                step_info |= {f"{pg["name"]}.{i}": sample[1] for i, sample in enumerate(samples)}
+
         step_info["step_time"] = float(step_timer)
         
         # Hacky way to avoid messing up the graph when my computer falls asleep
