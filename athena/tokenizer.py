@@ -86,9 +86,4 @@ tokenizer.pad_token = "<|pad|>"
 tokenizer.padding_side = "left"
 
 unknown_token_id = tokenizer("<|unknown|>")['input_ids'][0]
-pad_token_id     = tokenizer("<|pad|>")['input_ids'][0]
-input_token_id   = tokenizer("<|input|>")['input_ids'][0]
-output_token_id  = tokenizer("<|output|>")['input_ids'][0]
-think_token_id   = tokenizer("<|think|>")['input_ids'][0]
-say_token_id     = tokenizer("<|say|>")['input_ids'][0]
-end_token_id     = input_token_id
+pad_token_id     = tokenizer("<|eos|>")['input_ids'][0]

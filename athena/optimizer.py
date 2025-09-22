@@ -13,8 +13,8 @@ RouteTuple   = Tuple[str, Dict[str, DynamicValue]]
 OptimizerSpecs = Dict[str, Tuple[Type[Optimizer], Dict[str, Any]]]
 
 spec: OptimizerSpecs = {
-    "muon":  (Muon,  {"lr": 3e-3, "weight_decay": 0.0}),
-    "adamw": (AdamW, {"lr": 3e-5, "weight_decay": 0.0, "betas": (0.9, 0.98), "eps": 1e-6}),
+    "muon":  (Muon,  {}),
+    "adamw": (AdamW, {}),
 }
 
 # Return "key" for defaults, or ("key", {"lr": ..., ...}) for per-group overrides.
@@ -27,10 +27,7 @@ def router(name: str, param: Parameter) -> Optional[Union[str, RouteTuple]]:
         return "adamw", {"lr": 3e-2}
 
     if "proj" in name:
-        return "muon"
-    
-    if "norm" in name:
-        return "adamw"
+        return "muon", {"lr": 1e-3}
     
     raise ValueError(f"No optimizer routing procedure found for param with name {name} and shape {param.shape}")
 
@@ -54,7 +51,7 @@ class MultiOptimizer(Optimizer):
                 dynamic_group: Dict[str, DynamicValue] = {}
             elif isinstance(decision, tuple) and len(decision) == 2:
                 opt_key, overrides = decision
-                dynamic_group = overrides.copy()
+                dynamic_group = spec[opt_key][1] | overrides.copy()
             else:
                 raise TypeError(f"Router must return str | (str, dict) | None, got {type(decision)}")
 

@@ -4,7 +4,7 @@ from athena.pretrain import Pretrainer
 
 argparser = ArgumentParser(description="Script for pretraining an athena model from a given checkpoint")
 argparser.add_argument("--name", type=str, required=False)
-argparser.add_argument("--batch_size", type=int, default=2)
+argparser.add_argument("--batch_size", type=int, default=1)
 argparser.add_argument("--backwards_every", type=int, default=1)
 argparser.add_argument("--log_every", type=int, default=0)
 argparser.add_argument("--save_every", type=int, default=120)

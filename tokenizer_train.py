@@ -31,12 +31,8 @@ trainer = BpeTrainer(
         + " \n\t"
     ),
     special_tokens = [
-        "<|pad|>",
+        "<|eos|>",
         "<|unknown|>",
-        "<|input|>",
-        "<|output|>",
-        "<|think|>",
-        "<|say|>",
         "<|nospace|>",
     ],
 )

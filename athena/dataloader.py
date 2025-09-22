@@ -9,10 +9,17 @@ from settings import (
     pretrain_dataset_hfcolumn,
     pretrain_dataset_delimiter,
 )
-from athena.tokenizer import tokenizer
 
-
+def load_raw_dataset():
+    return load_dataset(
+        pretrain_dataset_hfpath,
+        data_dir=pretrain_dataset_hfdir,
+        split="train",
+    )
+    
 def _encode_ids(text: str) -> List[int]:
+    from athena.tokenizer import tokenizer
+    
     try:
         return tokenizer.encode(text, add_special_tokens=False)
     except TypeError:
@@ -42,11 +49,7 @@ class CharOffsetChunkIterable(IterableDataset):
         self.delim = _delimiter_str()
 
     def __iter__(self):
-        ds = load_dataset(
-            pretrain_dataset_hfpath,
-            data_dir=pretrain_dataset_hfdir,
-            split="train",
-        )
+        ds = load_raw_dataset()
 
         skip = self.start_offset_chars
         remaining_chars = self.take_chars  # None => unlimited
