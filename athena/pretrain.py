@@ -2,7 +2,6 @@ import re
 import torch
 import torch.nn.functional as functional
 import wandb
-import random
 from torch.amp import autocast, GradScaler
 from torch.optim import AdamW
 
@@ -12,7 +11,7 @@ from athena.device import device
 from athena.model import Athena, AthenaCompiled
 from athena.utils import Throttle, Timer
 
-from settings import pretrain_dataset_total_chars
+from settings import pretrain_dataset_name, pretrain_dataset_train_chars, pretrain_dataset_valid_chars
 
 class Pretrainer():
     
@@ -49,7 +48,7 @@ class Pretrainer():
             id=self.athena.wandb_id,
             name=self.athena.name,
             resume="allow",
-            config={"batch_size": self.batch_size, **self.athena.config}
+            config={"dataset": pretrain_dataset_name, "batch_size": self.batch_size, **self.athena.config}
         )
         try:
             self.train_internal(epoch_limit, time_limit)
@@ -68,8 +67,7 @@ class Pretrainer():
             train_dataloader, valid_dataloader = load_dataloader_pretrain(
                 round(self.athena.context_size * self.athena.context_multiple),
                 self.batch_size,
-                valid_chars=round(self.run.summary.get("epoch", 0) * pretrain_dataset_total_chars),
-                resume_chars=round(self.run.summary.get("epoch", 0) * pretrain_dataset_total_chars)
+                resume_chars=self.run.summary.get("chars", 0) % pretrain_dataset_train_chars
             )
             
             print("Starting epoch...")
@@ -77,7 +75,7 @@ class Pretrainer():
             for batch in train_dataloader:
                 
                 step_info = {
-                    "epoch": train_dataloader.dataset.curr_offset_chars / pretrain_dataset_total_chars
+                    "chars": (self.run.summary.get("chars", 0) // pretrain_dataset_train_chars) * pretrain_dataset_train_chars + (train_dataloader.dataset.curr_offset_chars - pretrain_dataset_valid_chars)
                 }
                 
                 self.step(batch, step_info)
@@ -95,6 +93,7 @@ class Pretrainer():
                 with log_throttle as should_run:
                     if should_run:
                         print(
+                            f"Chars {step_info['chars']} "
                             f"Step {step_info['step']} "
                             f"Epoch {step_info['epoch']} "
                             f"Time {step_info['training_time']:.4f} "
@@ -114,6 +113,7 @@ class Pretrainer():
 
         with Timer() as step_timer:
      
+            step_info["epoch"] = self.run.summary.get("chars", 0) / pretrain_dataset_train_chars
             step_info["step"] = self.run.summary.get("step", 0) + 1
 
             batch = batch.to(device, non_blocking=True)
