@@ -4,7 +4,7 @@ pretrain_dataset_hfdir = "data"
 pretrain_dataset_hfcolumn = "content"
 pretrain_dataset_delimiter = "<|eos|>"
 pretrain_dataset_total_chars = 12982412
-pretrain_dataset_valid_chars = pretrain_dataset_total_chars // 10
+pretrain_dataset_valid_chars = pretrain_dataset_total_chars // 100
 
 # pretrain_dataset_name = "openwebmath"
 # pretrain_dataset_hfpath = "open-web-math/open-web-math"
@@ -20,3 +20,9 @@ pretrain_dataset_valid_chars = pretrain_dataset_total_chars // 10
 # pretrain_dataset_valid_chars = 100000
 
 tokenizer_path = f"tokenizers/{pretrain_dataset_name}.json"
+
+pretrain_dataset_train_chars = pretrain_dataset_total_chars - pretrain_dataset_valid_chars
+
+assert(0 <= pretrain_dataset_total_chars)
+assert(0 <= pretrain_dataset_valid_chars <= pretrain_dataset_total_chars)
+assert(0 <= pretrain_dataset_train_chars <= pretrain_dataset_total_chars)

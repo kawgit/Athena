@@ -14,7 +14,6 @@ argparser.add_argument("--key_size", type=int, default=12)
 argparser.add_argument("--vocab_size", type=int, default=32768)
 argparser.add_argument("--context_size", type=int, default=256)
 argparser.add_argument("--context_multiple", type=float, default=2)
-argparser.add_argument("--null_len", type=int, default=4)
 
 config = vars(argparser.parse_args())
 config["wandb_id"] = None

@@ -8,6 +8,9 @@ from settings import (
     pretrain_dataset_hfdir,
     pretrain_dataset_hfcolumn,
     pretrain_dataset_delimiter,
+    pretrain_dataset_total_chars,
+    pretrain_dataset_train_chars,
+    pretrain_dataset_valid_chars,
 )
 
 def load_raw_dataset():
@@ -112,29 +115,28 @@ def _collate_tokens(batch: List[torch.Tensor]) -> torch.Tensor:
 def load_dataloader_pretrain(
     context_size: int,
     batch_size: int,
-    valid_chars: int,      # first N chars go to validation
     resume_chars: int = 0  # then skip this many chars before training
 ):
     """
     Whole dataset is treated as one big string with a delimiter between records.
-    Validation takes the first `valid_chars` characters.
-    Training starts at offset `valid_chars + resume_chars` and streams the rest.
+    Validation takes the first `pretrain_dataset_valid_chars` characters.
+    Training starts at offset `pretrain_dataset_valid_chars + resume_chars` and streams the rest.
 
     Returns:
         train_loader, valid_loader
         where each batch is a LongTensor of shape (B, C+1)
     """
-    if valid_chars < 0 or resume_chars < 0:
-        raise ValueError("valid_chars and resume_chars must be >= 0")
+    if pretrain_dataset_valid_chars < 0 or resume_chars < 0:
+        raise ValueError("pretrain_dataset_valid_chars and resume_chars must be >= 0")
 
     valid_iterable = CharOffsetChunkIterable(
         context_size=context_size,
         start_offset_chars=0,
-        take_chars=valid_chars,
+        take_chars=pretrain_dataset_valid_chars,
     )
     train_iterable = CharOffsetChunkIterable(
         context_size=context_size,
-        start_offset_chars=valid_chars + resume_chars,
+        start_offset_chars=pretrain_dataset_valid_chars + resume_chars,
         take_chars=None,
     )
 
