@@ -1,9 +1,10 @@
-from typing import Dict, Any, List, Tuple, Callable, Iterable, Optional, Type, Union
 from torch.nn import Parameter
-from torch.optim import Optimizer
 from torch.optim import AdamW, Muon
+from torch.optim import Optimizer
+from typing import Dict, Any, List, Tuple, Callable, Iterable, Optional, Type, Union
 import math
 
+from athena.kuon import Kuon
 from athena.utils import linear_interpolator, scale_interpolator
 
 # ---- Types and config ----
@@ -15,19 +16,23 @@ OptimizerSpecs = Dict[str, Tuple[Type[Optimizer], Dict[str, Any]]]
 spec: OptimizerSpecs = {
     "muon":  (Muon,  {}),
     "adamw": (AdamW, {}),
+    "kuon": (Kuon, {}),
 }
 
 # Return "key" for defaults, or ("key", {"lr": ..., ...}) for per-group overrides.
 def router(name: str, param: Parameter) -> Optional[Union[str, RouteTuple]]:
 
-    if "vocab_proj" in name:
-        return "adamw", {"lr": 1e-4}
-
     if "table" in name:
-        return "adamw", {"lr": 3e-2}
+        return "adamw", {"lr": 3e-2, "weight_decay": 0}
 
-    if "proj" in name:
-        return "muon", {"lr": 1e-3}
+    if "sas" in name:
+        return "muon", { "lr": 4e-3 }
+    
+    if "ffn" in name:
+        return "muon", { "lr": 4e-3 }
+
+    if "vocab_proj" in name:
+        return "adamw", { "lr": 2e-4 }
     
     raise ValueError(f"No optimizer routing procedure found for param with name {name} and shape {param.shape}")
 

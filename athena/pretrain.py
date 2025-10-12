@@ -1,3 +1,4 @@
+import math
 import re
 import torch
 import torch.nn.functional as functional
@@ -9,7 +10,7 @@ from athena.checkpoint import save_checkpoint
 from athena.dataloader import load_dataloader_pretrain
 from athena.device import device
 from athena.model import Athena, AthenaCompiled
-from athena.utils import Throttle, Timer
+from athena.utils import Throttle, Timer, sample_indices_torch
 
 from settings import pretrain_dataset_name, pretrain_dataset_train_chars, pretrain_dataset_valid_chars
 
@@ -21,7 +22,8 @@ class Pretrainer():
         optimizer: AdamW,
         scaler: GradScaler,
         autocast_ctx: autocast,
-        batch_size=4,
+        train_batch_size=4,
+        valid_batch_size=16,
         backwards_every=5,
         log_every=0,
         save_every=120,
@@ -33,7 +35,8 @@ class Pretrainer():
         self.athena_compiled = AthenaCompiled(self.athena)
         self.autocast_ctx = autocast_ctx
         
-        self.batch_size = batch_size
+        self.train_batch_size = train_batch_size
+        self.valid_batch_size = valid_batch_size
         self.backwards_every = backwards_every
         self.save_every = save_every
         self.valid_every = valid_every
@@ -48,7 +51,7 @@ class Pretrainer():
             id=self.athena.wandb_id,
             name=self.athena.name,
             resume="allow",
-            config={"dataset": pretrain_dataset_name, "batch_size": self.batch_size, **self.athena.config}
+            config={"dataset": pretrain_dataset_name, "train_batch_size": self.train_batch_size, **self.athena.config}
         )
         try:
             self.train_internal(epoch_limit, time_limit)
@@ -66,16 +69,19 @@ class Pretrainer():
         while True:
             train_dataloader, valid_dataloader = load_dataloader_pretrain(
                 round(self.athena.context_size * self.athena.context_multiple),
-                self.batch_size,
-                resume_chars=self.run.summary.get("chars", 0) % pretrain_dataset_train_chars
+                self.train_batch_size,
+                self.valid_batch_size,
+                resume_chars=(self.run.summary.get("chars", 0) % pretrain_dataset_train_chars) % (pretrain_dataset_train_chars - 10000)
             )
             
             print("Starting epoch...")
 
-            for batch in train_dataloader:
+            for char_index, batch in train_dataloader:
+                
+                assert char_index - pretrain_dataset_valid_chars < pretrain_dataset_train_chars
                 
                 step_info = {
-                    "chars": (self.run.summary.get("chars", 0) // pretrain_dataset_train_chars) * pretrain_dataset_train_chars + (train_dataloader.dataset.curr_offset_chars - pretrain_dataset_valid_chars)
+                    "chars": (self.run.summary.get("chars", 0) // pretrain_dataset_train_chars) * pretrain_dataset_train_chars + (char_index - pretrain_dataset_valid_chars)
                 }
                 
                 self.step(batch, step_info)
@@ -107,13 +113,15 @@ class Pretrainer():
                         
                 if self.run.summary.get("epoch", 0) >= epoch_limit or self.run.summary.get("training_time", 0) >= time_limit:
                     return
+            
+            wandb.log({"chars": round(self.run.summary.get("epoch", 0)) * pretrain_dataset_train_chars})
                 
     def step(self, batch, step_info):
         self.athena_compiled.train()
 
         with Timer() as step_timer:
      
-            step_info["epoch"] = self.run.summary.get("chars", 0) / pretrain_dataset_train_chars
+            step_info["epoch"] = step_info["chars"] / pretrain_dataset_train_chars
             step_info["step"] = self.run.summary.get("step", 0) + 1
 
             batch = batch.to(device, non_blocking=True)
@@ -141,13 +149,13 @@ class Pretrainer():
                 
                 for k, v in pg.items():
                     path = re.sub(r"\d+", "X", pg["name"]) + "." + k
-                    if k in ["lr", "momentum"]:
+                    if k in ["lr", "momentum", "update_lr"]:
                         step_info[path] = v
                 
                 weight: torch.Tensor = pg["params"][0].data
                 
                 if "monitored_indices" not in pg:
-                    pg["monitored_indices"] = torch.randperm(weight.numel(), device=weight.device)[:5]
+                    pg["monitored_indices"] = sample_indices_torch(weight.numel(), 5, pg["name"])
                     
                 samples = zip(pg["monitored_indices"], weight.view(-1)[pg["monitored_indices"]].detach().cpu())
                 
@@ -164,6 +172,7 @@ class Pretrainer():
     def validate(self, valid_dataloader):
         self.athena_compiled.eval()
         valid_loss = 0.0
+        num_batches = 0
         for batch in valid_dataloader:
             batch = batch.to(device, non_blocking=True)
             batch_x = batch[:, :-1].contiguous()
@@ -171,7 +180,8 @@ class Pretrainer():
             with self.autocast_ctx:
                 output = self.athena_compiled(batch_x)["logits"]
                 valid_loss += self.criterion(output, batch_y).detach().item()
-        valid_loss /= max(1, len(valid_dataloader))
+            num_batches += 1
+        valid_loss /= max(1, num_batches)
         self.athena_compiled.train()
         return valid_loss
 

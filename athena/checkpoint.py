@@ -1,6 +1,4 @@
 from torch import GradScaler
-from torch.optim import AdamW
-from torch.optim.lr_scheduler import LinearLR, ConstantLR, SequentialLR
 import os
 import torch
 
@@ -9,8 +7,16 @@ from athena.model import Athena
 from athena.optimizer import MultiOptimizer
 from athena.utils import EmptyInitOnDevice
 
-def get_checkpoint_path(name):
-    return f"checkpoints/{name.removesuffix('.ckpt')}.ckpt"
+def get_checkpoint_path(name: str | None):
+    checkpoints_dirname = "checkpoints"
+    if name == None:
+        result = max(
+            (os.path.join(checkpoints_dirname, f) for f in os.listdir(checkpoints_dirname)),
+            key=os.path.getmtime
+        )
+        print(f"Found most recently modified checkpoint: {result}")
+        return result
+    return os.path.join(checkpoints_dirname, name.removesuffix('.ckpt') + ".ckpt")
 
 def save_checkpoint(athena, optimizer=None, scaler=None, best=False):
     checkpoint = {

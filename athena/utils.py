@@ -1,10 +1,14 @@
 from bisect import bisect_left
-from typing import Callable, List, Tuple
+from typing import Callable, Tuple, Type
+import hashlib
 import math
 import matplotlib.pyplot as plt
 import numpy as np
+import os
+import random
 import time
 import torch
+import torch.nn as nn
 import torch.nn.functional as functional
 import torch.utils._device
 
@@ -180,3 +184,57 @@ def ith_element(t: torch.Tensor, i: int):
         # O(rank): compute the multi-dim index, no full flatten/copy
         idx = torch.unravel_index(torch.tensor(i, device=t.device), t.shape)
         return t[idx]
+
+@torch.no_grad()
+def add_or_create(param, attr, value):
+    setattr(param, attr, value if not hasattr(param, attr) else getattr(param, attr) + value)
+    
+@torch.no_grad()
+def lerp_or_create(param, attr, value, momentum=.9):
+    setattr(param, attr, value if not hasattr(param, attr) else momentum * getattr(param, attr) + (1 - momentum) * value)
+    
+@torch.no_grad()
+def concat_or_create(param, attr, value):
+    setattr(param, attr, value if not hasattr(param, attr) else torch.concat((getattr(param, attr), value)))
+    
+def seed_all(seed: int = 42, deterministic: bool = True):
+    """
+    Seed all randomness sources for full reproducibility.
+    """
+    # --- Python ---
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+    # --- NumPy ---
+    np.random.seed(seed)
+
+    # --- PyTorch ---
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # For multi-GPU setups
+
+    # --- CuDNN backend determinism ---
+    if deterministic:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    else:
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
+
+    # --- PyTorch 2.0+ Deterministic Algorithms ---
+    if hasattr(torch, "use_deterministic_algorithms"):
+        torch.use_deterministic_algorithms(True, warn_only=True)
+
+    print(f"[Seeded everything with seed={seed}]")
+    
+def str_to_seed(s: str, bits: int = 64) -> int:
+    return int(hashlib.sha256(s.encode("utf-8")).hexdigest(), 16) % (2**bits)
+
+def sample_indices_torch(n: int, k: int, seed_str: str, device: str | None = None) -> torch.Tensor:
+    if not (0 <= k <= n):
+        raise ValueError("k must be in [0, n].")
+    # Isolated generator; does not affect global torch RNG state
+    g = torch.Generator(device="cpu")
+    g.manual_seed(str_to_seed(seed_str))
+    idx = torch.randperm(n, generator=g)[:k]           # on CPU, deterministic from seed_str
+    return idx.to(device) if device is not None else idx
