@@ -7,7 +7,6 @@ from athena.checkpoint import load_checkpoint
 from athena.device import device
 from athena.model import AthenaCompiled
 from athena.tokenizer import tokenizer
-from athena.utils import 
 
 argparser = ArgumentParser(description="Script for running inference on an athena model")
 argparser.add_argument("--name", type=str, default=None)

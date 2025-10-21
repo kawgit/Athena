@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # train_tokenizer.py
-import math
 import argparse
+import math
+import os
 import random
 from typing import Iterator, List, Optional
 
@@ -78,6 +79,7 @@ def main():
     tokenizer.decoder = ByteLevelDecoder()
 
     # 5) Save
+    os.makedirs(os.path.dirname(tokenizer_path), exist_ok=True)
     tokenizer.save(tokenizer_path)
 
     # 6) Report
