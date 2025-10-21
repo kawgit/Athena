@@ -93,7 +93,7 @@ class Throttle:
         return False
 
 def generate_model_name(config):
-    return config["name"] if config["name"] != None else f"athena_{"_".join(str(value) for value in config.values() if type(value) in [int, float])}"
+    return config["name"] if config["name"] != None else f"athena_{"_".join(str(value) for value in config.values() if type(value) in [int, float, list])}"
 
 def is_power_of_two(num):
     return num != 0 and ((num & (num - 1)) == 0)

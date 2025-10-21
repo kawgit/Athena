@@ -2,7 +2,9 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as functional
+from torch import Tensor
 
+from athena.attention import attention
 from athena.device import device
 from athena.generation import AthenaGeneration
 
@@ -15,30 +17,17 @@ class Athena(nn.Module):
         self.__dict__.update(config)
         
         assert(self.num_heads % self.num_kv_heads == 0)
+        assert(not hasattr(self, "window_sizes") or len(self.window_sizes) == self.num_layers)
         
-        self.max_tokens = round(self.context_size * self.context_multiple)
-        
-        self.register_buffer(
-            "causal_buffer",
-            torch.zeros((self.max_tokens, self.max_tokens), dtype=torch.bool),
-            persistent=False
-        )
-        
-        for q_index in range(self.max_tokens):
-            self.causal_buffer[q_index][max(0, q_index + 1 - self.context_size):q_index + 1] = True
-
-        # Invert causal_buffer so that masked_fill works properly
-        self.causal_buffer = self.causal_buffer == False
-
         self.register_buffer(
             "cos_buffer",
-            torch.zeros((self.max_tokens, self.key_size), dtype=torch.float32),
+            torch.zeros((self.context_size, self.key_size), dtype=torch.bfloat16),
             persistent=False
         )
         
         self.register_buffer(
             "sin_buffer",
-            torch.zeros((self.max_tokens, self.key_size), dtype=torch.float32),
+            torch.zeros((self.context_size, self.key_size), dtype=torch.bfloat16),
             persistent=False
         )
         
@@ -49,7 +38,7 @@ class Athena(nn.Module):
         exponent = (-2.0 / self.key_size) * offset
         scales = torch.pow(10000, exponent)
 
-        m = torch.arange(self.max_tokens)
+        m = torch.arange(self.context_size)
         angles = m[:, None] * scales[None, :]
         
         self.cos_buffer = torch.cos(angles)
@@ -57,8 +46,8 @@ class Athena(nn.Module):
         self.sin_buffer[:, :half] *= -1
         
         self.table = nn.Embedding(self.vocab_size, self.embedding_size)
-        self.sas = nn.ModuleList([AthenaSA(self.config) for i in range(self.num_layers)])
-        self.ffns = nn.ModuleList([AthenaFFN(self.config) for i in range(self.num_layers)])
+        self.sas = nn.ModuleList([AthenaSA(i, self.config) for i in range(self.num_layers)])
+        self.ffns = nn.ModuleList([AthenaFFN(i, self.config) for i in range(self.num_layers)])
         self.norm = nn.RMSNorm(self.embedding_size, eps=1e-05, elementwise_affine=False)
         self.vocab_proj = nn.Linear(self.embedding_size, self.vocab_size, bias=False)
 
@@ -84,16 +73,16 @@ class Athena(nn.Module):
         q_start = past_kvs[0].shape[3] if use_cache else 0
         k_len = q_start + q_len
         
-        causal_buffer = self.causal_buffer[q_start:k_len, :k_len]
         cos_buffer = (self.cos_buffer[q_start:k_len], self.cos_buffer[:k_len])
         sin_buffer = (self.sin_buffer[q_start:k_len], self.sin_buffer[:k_len])
         
         present_kvs = []
         embeddings = self.table(tokens)
+        past_kvs = zip(*past_kvs) if use_cache else [None] * len(self.sas)
         
-        for sa, ffn, past_kv in zip(self.sas, self.ffns, zip(*past_kvs) if use_cache else [None] * len(self.sas)):
-                        
-            embeddings, present_kv = sa(embeddings, cos_buffer, sin_buffer, causal_buffer, past_kv=past_kv)
+        for sa, ffn, past_kv in zip(self.sas, self.ffns, past_kvs):
+
+            embeddings, present_kv = sa(embeddings, cos_buffer, sin_buffer, past_kv=past_kv)
             embeddings = ffn(embeddings)
             
             if create_cache:
@@ -110,7 +99,6 @@ class Athena(nn.Module):
         
         if return_logits:
             result["logits"] = self.vocab_proj(embeddings)
-            # result["logits"] = 15 * result["logits"] / (result["logits"].square() + 225).sqrt()
         
         if create_cache:
             result["present_kvs"] = present_kvs
@@ -139,12 +127,14 @@ class Athena(nn.Module):
             yield generation
 
 class AthenaSA(nn.Module):
-    def __init__(self, config):
+    def __init__(self, layer_index, config):
 
         super().__init__()
 
         self.config = config
         self.__dict__.update(config)
+        
+        self.window_size = config["window_sizes"][layer_index]
 
         self.norm = nn.RMSNorm(self.embedding_size, eps=1e-05, elementwise_affine=False)
         self.queries_proj = nn.Linear(self.embedding_size, self.key_size * self.num_heads, bias=False)
@@ -157,13 +147,13 @@ class AthenaSA(nn.Module):
             setattr(self, key, value)
             self.config[key] = value
 
-    def forward(self, embeddings, cos_buffer, sin_buffer, causal_buffer, past_kv=None):
+    def forward(self, embeddings: Tensor, cos_buffer: Tensor, sin_buffer: Tensor, past_kv=None):
+        
+        normed: Tensor = self.norm(embeddings) # B, C, E
 
-        normed = self.norm(embeddings) # B, C, E
-
-        queries = self.queries_proj(normed) # B, C, H_q * Q
-        keys = self.keys_proj(normed) # B, C, H_kv * K
-        values = self.values_proj(normed) # B, C, H_kv * V
+        queries: Tensor = self.queries_proj(normed) # B, C, H_q * Q
+        keys: Tensor = self.keys_proj(normed) # B, C, H_kv * K
+        values: Tensor = self.values_proj(normed) # B, C, H_kv * V
         
         batch_size, current_context_size, _ = embeddings.shape
         q_shape = (batch_size, current_context_size, self.num_heads, self.key_size)
@@ -184,23 +174,9 @@ class AthenaSA(nn.Module):
         queries = self.rotate(queries, cos_buffer[0], sin_buffer[0])
         keys = self.rotate(keys, cos_buffer[1], sin_buffer[1])
         
-        if self.num_kv_heads != self.num_heads:
-            rate = self.num_heads // self.num_kv_heads
-            keys = keys.repeat(1, rate, 1, 1)
-            values = values.repeat(1, rate, 1, 1)
-        
-        queries = queries.contiguous()
-        keys = keys.contiguous()
-        values = values.contiguous()
-        
-        attn = queries @ keys.transpose(-2, -1) / math.sqrt(self.key_size) # B, H, C, C
-        attn = attn.masked_fill(causal_buffer, float("-inf"))
-        attn = functional.softmax(attn, dim=-1)
-        
-        outputs = attn @ values # B, H, C, V
-        
-        outputs = outputs.transpose(1, 2).contiguous() # B, C, H, V
-        outputs = outputs.flatten(-2) # B, C, H * V
+        outputs = attention(queries, keys, values, window_size=self.window_size)
+        outputs = outputs.transpose(1, 2).contiguous() # B, C, H_q, V
+        outputs = outputs.flatten(-2) # B, C, H_q * V
         outputs = self.out_proj(outputs) # B, C, E
 
         return embeddings + outputs, present_kv
@@ -212,7 +188,7 @@ class AthenaSA(nn.Module):
         return cos_buffer * features + sin_buffer * swapped
 
 class AthenaFFN(nn.Module):
-    def __init__(self, config):
+    def __init__(self, layer_index, config):
 
         super().__init__()
 

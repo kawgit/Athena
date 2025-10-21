@@ -26,10 +26,10 @@ def router(name: str, param: Parameter) -> Optional[Union[str, RouteTuple]]:
         return "adamw", {"lr": 3e-2, "weight_decay": 0}
 
     if "sas" in name:
-        return "muon", { "lr": 4e-3 }
+        return "muon", { "lr": 2e-3 }
     
     if "ffn" in name:
-        return "muon", { "lr": 4e-3 }
+        return "muon", { "lr": 2e-3 }
 
     if "vocab_proj" in name:
         return "adamw", { "lr": 2e-4 }

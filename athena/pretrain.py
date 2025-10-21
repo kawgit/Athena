@@ -68,7 +68,7 @@ class Pretrainer():
             
         while True:
             train_dataloader, valid_dataloader = load_dataloader_pretrain(
-                round(self.athena.context_size * self.athena.context_multiple),
+                self.athena.context_size,
                 self.train_batch_size,
                 self.valid_batch_size,
                 resume_chars=(self.run.summary.get("chars", 0) % pretrain_dataset_train_chars) % (pretrain_dataset_train_chars - 10000)
@@ -173,7 +173,7 @@ class Pretrainer():
         self.athena_compiled.eval()
         valid_loss = 0.0
         num_batches = 0
-        for batch in valid_dataloader:
+        for i, batch in valid_dataloader:
             batch = batch.to(device, non_blocking=True)
             batch_x = batch[:, :-1].contiguous()
             batch_y = batch[:, 1:].contiguous()

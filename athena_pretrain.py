@@ -1,3 +1,5 @@
+import torch
+
 from argparse import ArgumentParser
 from athena.checkpoint import load_checkpoint
 from athena.pretrain import Pretrainer
