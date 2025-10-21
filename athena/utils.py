@@ -27,26 +27,6 @@ class EmptyInitOnDevice(torch.overrides.TorchFunctionMode):
             kwargs['device'] = self.device
         return func(*args, **kwargs)
 
-def make_chat_pretty(chat):
-
-    return chat.replace("<|pad|>", "").replace("<|input|>", "\n\nInput:\n").replace("<|output|>", "\n\nOutput:\n")
-
-def print_graph(gfn, indent=0):
-    if indent > 5:
-        return
-
-    print(" " * indent + str(gfn))
-    
-    if hasattr(gfn, 'next_functions'):
-        for fn, _ in gfn.next_functions:
-            if fn is not None:
-                print_graph(fn, indent + 2)
-
-def left_pad_and_stack(tensor_list):
-    max_len = max(len(t) for t in tensor_list)
-    padded = [functional.pad(torch.tensor(t, dtype=torch.long) if type(t) == list else t, (max_len - len(t), 0)) for t in tensor_list]
-    return torch.stack(padded)
-
 class Timer:
     def __init__(self, title=None):
         self.title = title
@@ -95,16 +75,6 @@ class Throttle:
 def generate_model_name(config):
     return config["name"] if config["name"] != None else f"athena_{"_".join(str(value) for value in config.values() if type(value) in [int, float, list])}"
 
-def is_power_of_two(num):
-    return num != 0 and ((num & (num - 1)) == 0)
-
-def grow_nice_number(num):
-    if is_power_of_two(num):
-        return math.ceil(1.5 * num)
-    num = math.ceil(num / 1.5) * 2
-    assert(is_power_of_two(num))
-    return num
-
 def save_tensor_as_image(tensor, filename="output.png", cmap="viridis"):
     """
     Save a 2D tensor (or numpy array) as an image.
@@ -127,13 +97,6 @@ def save_tensor_as_image(tensor, filename="output.png", cmap="viridis"):
     
     plt.imsave(filename, norm_tensor, cmap=cmap)
     print(f"Image saved to {filename}")
-
-def get_param_by_path(model, path: str):
-    """Return parameter by dotted path string."""
-    cur = model
-    for name in path.split("."):
-        cur = getattr(cur, name)
-    return cur
 
 def linear_interpolator(*points: Tuple[float, float]) -> Callable[[float], float]:
     """

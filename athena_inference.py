@@ -7,7 +7,7 @@ from athena.checkpoint import load_checkpoint
 from athena.device import device
 from athena.model import AthenaCompiled
 from athena.tokenizer import tokenizer
-from athena.utils import make_chat_pretty
+from athena.utils import 
 
 argparser = ArgumentParser(description="Script for running inference on an athena model")
 argparser.add_argument("--name", type=str, default=None)
@@ -41,14 +41,14 @@ with torch.inference_mode(), torch.autocast(device.type):
                     total_tps = curr_len / (time.time() - time_of_start)
 
                     os.system("clear")
-                    print(make_chat_pretty(text))
+                    print(text)
                     print(f"Total tokens: {curr_len} Recent TPS: {recent_tps:.2f} Total TPS: {total_tps:.2f}")
                     
                     len_of_last_print = curr_len
         
     except KeyboardInterrupt:
         os.system("clear && clear")
-        print(make_chat_pretty(text))
+        print(text)
         print(f"Total tokens: {curr_len} Recent TPS: {recent_tps:.2f} Total TPS: {total_tps:.2f}")
             
             
