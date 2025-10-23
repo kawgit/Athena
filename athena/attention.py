@@ -34,7 +34,7 @@ def attention(queries: Tensor, keys: Tensor, values: Tensor, window_size: int = 
     Efficient implementation of causal, cache-conditioned Grouped Query Attention (GQA) where each 
     token can "see" the previous window_size tokens (including itself).
     
-    Time complexity is O(n) where wrt to the sequence length assuming a set
+    Time complexity is O(n) with respect to the sequence length assuming a set
     window_size. 
     
     To explain, I'll illustrate using a toy example of a single batch with
@@ -109,11 +109,11 @@ def attention(queries: Tensor, keys: Tensor, values: Tensor, window_size: int = 
          [0 0 0 0 0 0 0 d d d d]
          [0 0 0 0 0 0 0 d d d d]]
          
-    Full Keys / Values List: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-                                [    a's   ][    c's   ]
+    Keys / Values List: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+                           [    a's   ][    c's   ]
     
-    Full Queries List: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-                            [ a's ]     [ c's ]
+    Queries List: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+                       [ a's ]     [ c's ]
     
     To find the the key / value lists, we can simply select that range of keys and then
     reshape them to create a (2, 4) shaped tensor of keys for chunks a and c. Finding the
@@ -178,9 +178,9 @@ def attention(queries: Tensor, keys: Tensor, values: Tensor, window_size: int = 
         dense_right = cache_size + dense_height
         dense_width = dense_right - dense_left
         
-        dense_queries = queries[:, :, :dense_height, :].contiguous()
-        dense_keys = keys[:, :, dense_left:dense_right, :].contiguous()
-        dense_values = values[:, :, dense_left:dense_right, :].contiguous()
+        dense_queries = queries[:, :, :dense_height, :]
+        dense_keys = keys[:, :, dense_left:dense_right, :]
+        dense_values = values[:, :, dense_left:dense_right, :]
         dense_causal = band_exclusion_mask(dense_height, dense_width, cache_size-window_size-dense_left+1, cache_size-dense_left, device=device)
         
         dense_output = attention_chunk(dense_queries, dense_keys, dense_values, dense_causal)

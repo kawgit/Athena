@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# train_tokenizer.py
 import argparse
 import math
 import os
